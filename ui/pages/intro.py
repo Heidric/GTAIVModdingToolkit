@@ -1,8 +1,10 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QPushButton, QFileDialog, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QPushButton, QFileDialog, QMessageBox, QGroupBox, QRadioButton
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 
-from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE
+from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE, RADIO_BUTTON_STYLE, GROUP_BOX_STYLE
+from replacement_strategy import check_fusionfix_installed
 
 
 class IntroPage(QWidget):
@@ -25,6 +27,23 @@ class IntroPage(QWidget):
         self.browse_button.setStyleSheet(BUTTON_STYLE)
         self.layout.addWidget(self.browse_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        self.method_group = QGroupBox("Replacement Method", self)
+        self.method_group.setStyleSheet(GROUP_BOX_STYLE)
+        self.method_group.setFixedWidth(400)
+        
+        self.method_layout = QVBoxLayout(self.method_group)
+        
+        self.fusion_radio = QRadioButton("FusionFix (Recommended - Safe)", self.method_group)
+        self.fusion_radio.setStyleSheet(RADIO_BUTTON_STYLE)
+        self.fusion_radio.setChecked(True)
+        self.method_layout.addWidget(self.fusion_radio)
+        
+        self.direct_radio = QRadioButton("Direct Replacement (Not Recommended - Risky)", self.method_group)
+        self.direct_radio.setStyleSheet(RADIO_BUTTON_STYLE)
+        self.method_layout.addWidget(self.direct_radio)
+        
+        self.layout.addWidget(self.method_group, alignment=Qt.AlignmentFlag.AlignCenter)
+
         self.next_button = QPushButton("Next", self)
         self.next_button.clicked.connect(self.validate_and_proceed)
         self.next_button.setFixedWidth(100)
@@ -43,4 +62,22 @@ class IntroPage(QWidget):
                                 QMessageBox.StandardButton.Ok,
                                 QMessageBox.StandardButton.NoButton)
             return
-        self.on_next(gtaiv_path)
+
+        use_direct = self.direct_radio.isChecked()
+
+        if not use_direct:
+            if not check_fusionfix_installed(gtaiv_path):
+                msg = QMessageBox(self)
+                msg.setWindowTitle("FusionFix Required")
+                msg.setText("FusionFix is required for the recommended safe replacement method.\n\n"
+                            "It was not found in your game directory.\n"
+                            "Would you like to visit the download page?")
+                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                ret = msg.exec()
+                
+                if ret == QMessageBox.Yes:
+                    QDesktopServices.openUrl(QUrl("https://fusionfix.io/iv"))
+                
+                return
+
+        self.on_next(gtaiv_path, use_direct)

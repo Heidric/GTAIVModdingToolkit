@@ -9,6 +9,7 @@ from ui.pages.progress import ProgressPage
 from replace_audio.replace_audio import replace_special_audio
 from update_length.update_song_length import update_song_length
 from utils import install_ffmpeg, check_ffmpeg
+from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
 from pyrpfiv import RPFParser
 import os
 import shutil
@@ -20,20 +21,37 @@ class ReplaceSongWorker(QThread):
     finished = Signal()
     error = Signal(str)
 
-    def __init__(self, gtaiv_path, selected_radio, selected_song, new_song_path):
+    def __init__(self, gtaiv_path, selected_radio, selected_song, new_song_path, use_direct):
         super().__init__()
         self.gtaiv_path = gtaiv_path
         self.selected_radio = selected_radio
         self.selected_song = selected_song
         self.new_song_path = new_song_path
+        self.use_direct = use_direct
 
     def run(self):
         try:
             print("Worker started")
-            rpf_path = os.path.join(self.gtaiv_path, "pc/audio/sfx", self.selected_radio)
+            
+            # Select strategy
+            if self.use_direct:
+                strategy = DirectReplacementStrategy(self.gtaiv_path)
+                print("Using Direct Replacement Strategy")
+            else:
+                strategy = FusionFixReplacementStrategy(self.gtaiv_path)
+                print("Using FusionFix Replacement Strategy")
+
+            # Prepare files (copy if needed for FusionFix)
+            strategy.prepare_rpf(self.selected_radio)
+            strategy.prepare_dat15()
+
+            rpf_path = strategy.get_rpf_path(self.selected_radio)
+            dat15_path = strategy.get_dat15_path()
+            
             radio_name = self.selected_radio[:-4].upper()
             full_song_path = f"{radio_name}/{self.selected_song}"
             print(f"RPF Path: {rpf_path}")
+            print(f"Dat15 Path: {dat15_path}")
             print(f"Full Song Path: {full_song_path}")
 
             parser = RPFParser(rpf_path, os.path.join(self.gtaiv_path, "GTAIV.exe"))
@@ -52,7 +70,10 @@ class ReplaceSongWorker(QThread):
 
             audio = AudioSegment.from_file(self.new_song_path)
             new_song_length = int(audio.duration_seconds * 1000)
-            update_song_length(self.gtaiv_path, radio_name, self.selected_song, new_song_length)
+            
+            # Pass the explicit dat15 path to update_song_length
+            update_song_length(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
+            
             self.progress.emit(75)
             print("Progress 75%")
 
@@ -71,6 +92,7 @@ class GTAIVEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.gtaiv_path = ""
+        self.use_direct = False
         self.selected_radio = ""
         self.selected_song = ""
         self.new_song_path = ""
@@ -109,7 +131,7 @@ class GTAIVEditor(QMainWindow):
                 return
 
         self.worker = ReplaceSongWorker(
-            self.gtaiv_path, self.selected_radio, self.selected_song, self.new_song_path
+            self.gtaiv_path, self.selected_radio, self.selected_song, self.new_song_path, self.use_direct
         )
 
         self.worker.progress.connect(self.update_progress)
@@ -119,8 +141,9 @@ class GTAIVEditor(QMainWindow):
         self.worker.start()
         self.stack.setCurrentWidget(self.progress_page)
 
-    def goto_radio_select(self, gtaiv_path):
+    def goto_radio_select(self, gtaiv_path, use_direct=False):
         self.gtaiv_path = gtaiv_path
+        self.use_direct = use_direct
         self.radio_select_page = RadioSelectPage(
             gtaiv_path=self.gtaiv_path,
             on_next=self.goto_song_select,

@@ -5,14 +5,20 @@ import sys
 from utils import resource_path
 
 
-def update_song_length(gtaiv_dir, radio, song, new_length):
+def update_song_length(gtaiv_dir, radio, song, new_length, dat15_path=None):
     """Update song length in the specified .dat15 file."""
     ivam_path = resource_path("ivam.exe")
-    dat15_file = os.path.join(gtaiv_dir, "pc", "audio", "config", "sounds.dat15")
+    
+    if dat15_path:
+        dat15_file = dat15_path
+    else:
+        dat15_file = os.path.join(gtaiv_dir, "pc", "audio", "config", "sounds.dat15")
+        
     dat15_dir = os.path.dirname(dat15_file)
     json_file = "sounds.dat15.json"
     backup_file = "sounds.dat15_backup"
 
+    print(f"Targeting dat15 file: {dat15_file}")
     print("Converting dat15 to JSON...")
     if not os.path.exists(dat15_file):
         raise FileNotFoundError(f"Error: {dat15_file} not found in {gtaiv_dir}")
