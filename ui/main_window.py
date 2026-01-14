@@ -6,8 +6,7 @@ from ui.pages.radio_select import RadioSelectPage
 from ui.pages.song_select import SongSelectPage
 from ui.pages.replace import ReplacePage
 from ui.pages.progress import ProgressPage
-from replace_audio.replace_audio import replace_special_audio
-from update_length.update_song_length import update_song_length
+from audio_utils import replace_special_audio, update_song_duration
 from utils import install_ffmpeg, check_ffmpeg
 from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
 from pyrpfiv import RPFParser
@@ -71,8 +70,8 @@ class ReplaceSongWorker(QThread):
             audio = AudioSegment.from_file(self.new_song_path)
             new_song_length = int(audio.duration_seconds * 1000)
             
-            # Pass the explicit dat15 path to update_song_length
-            update_song_length(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
+            # Pass the explicit dat15 path to update_song_duration
+            update_song_duration(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
             
             self.progress.emit(75)
             print("Progress 75%")

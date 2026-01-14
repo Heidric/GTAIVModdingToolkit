@@ -1,10 +1,114 @@
-import json
-import subprocess
 import os
-import sys
+import subprocess
+import json
+import tempfile
+import shutil
 from pydub import AudioSegment
 from utils import resource_path, check_ffmpeg
 
+def get_ivam_path():
+    """Returns absolute path to ivam.exe and verifies existence."""
+    path = os.path.abspath(resource_path("tools/ivam.exe"))
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"ivam.exe not found at {path}")
+    return path
+
+def get_ivaudioconv_path():
+    """Returns absolute path to IVAudioConv.exe and verifies existence."""
+    path = os.path.abspath(resource_path("tools/IVAudioConv.exe"))
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"IVAudioConv.exe not found at {path}")
+    return path
+
+def convert_dat15_to_json(dat15_path, output_dir):
+    """Converts sounds.dat15 to JSON in output_dir."""
+    ivam_path = get_ivam_path()
+    
+    temp_dat15 = os.path.join(output_dir, "sounds.dat15")
+    shutil.copy2(dat15_path, temp_dat15)
+    
+    # Run ivam
+    subprocess.run([ivam_path, "sounds.dat15"], cwd=output_dir, check=True, capture_output=True)
+    
+    json_path = os.path.join(output_dir, "sounds.dat15.json")
+    if not os.path.exists(json_path):
+        raise FileNotFoundError("sounds.dat15.json not generated")
+    return json_path
+
+def convert_json_to_dat15(json_path, output_dat15_path):
+    """Converts sounds.dat15.json back to sounds.dat15."""
+    ivam_path = get_ivam_path()
+    work_dir = os.path.dirname(json_path)
+    
+    subprocess.run([ivam_path, "gen"], cwd=work_dir, check=True, capture_output=True)
+    
+    gen_file = os.path.join(work_dir, "sounds.dat15.gen")
+    if not os.path.exists(gen_file):
+        raise FileNotFoundError("sounds.dat15.gen not generated")
+        
+    if os.path.exists(output_dat15_path):
+        os.remove(output_dat15_path)
+    shutil.move(gen_file, output_dat15_path)
+
+def get_sounds_dat15_data(gtaiv_dir, dat15_path=None):
+    """Parses sounds.dat15 and returns the JSON data."""
+    if dat15_path:
+        dat15_file = dat15_path
+    else:
+        dat15_file = os.path.join(gtaiv_dir, "pc", "audio", "config", "sounds.dat15")
+    
+    if not os.path.exists(dat15_file):
+        return {}
+        
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            json_path = convert_dat15_to_json(dat15_file, temp_dir)
+            with open(json_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error parsing dat15: {e}")
+            return {}
+
+def update_song_duration(gtaiv_dir, radio, song, new_length, dat15_path=None):
+    """Updates song duration in sounds.dat15."""
+    if dat15_path:
+        dat15_file = dat15_path
+    else:
+        dat15_file = os.path.join(gtaiv_dir, "pc", "audio", "config", "sounds.dat15")
+        
+    if not os.path.exists(dat15_file):
+        raise FileNotFoundError(f"{dat15_file} not found")
+        
+    with tempfile.TemporaryDirectory() as temp_dir:
+        json_path = convert_dat15_to_json(dat15_file, temp_dir)
+        
+        with open(json_path, "r") as f:
+            data = json.load(f)
+            
+        entry_name = f"{radio.upper()}_{song.upper()}"
+        if entry_name in data:
+            data[entry_name]["Metadata"]["__field00"] = new_length
+            print(f"Updated {entry_name} duration to {new_length}")
+        else:
+            print(f"Warning: {entry_name} not found in metadata")
+            
+        with open(json_path, "w") as f:
+            json.dump(data, f, indent=4)
+            
+        # Create backup
+        backup_file = f"{dat15_file}_backup"
+        if os.path.exists(backup_file):
+             os.remove(backup_file)
+        if os.path.exists(dat15_file):
+             shutil.copy2(dat15_file, backup_file)
+             
+        convert_json_to_dat15(json_path, dat15_file)
+
+def get_song_duration(data, radio, song):
+    entry_name = f"{radio.upper()}_{song.upper()}"
+    if entry_name in data:
+        return data[entry_name].get("Metadata", {}).get("__field00", 0)
+    return 0
 
 def process_audio(track_name, new_audio_file):
     """Process audio to generate a game-compatible WAV file."""
@@ -26,7 +130,6 @@ def process_audio(track_name, new_audio_file):
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
         raise
-
 
 def modify_oaf_file(oaf_file, track_name, new_audio_duration):
     """Modify the .oaf file to update DJ timestamps and ensure correct channel relationships."""
@@ -65,10 +168,9 @@ def modify_oaf_file(oaf_file, track_name, new_audio_duration):
     print(f"Updated .oaf file: {updated_oaf_file}")
     return updated_oaf_file
 
-
 def convert_back_to_special_audio(track_name):
     """Convert .oaf and .wav files back into a single special audio file."""
-    iv_audio_conv_path = resource_path("IVAudioConv.exe")
+    iv_audio_conv_path = get_ivaudioconv_path()
 
     oaf_file = f"{track_name}.oaf"
     wav_file = f"{track_name}.wav"
@@ -88,11 +190,10 @@ def convert_back_to_special_audio(track_name):
     print(f"Special audio file created: {special_audio_file}")
     return special_audio_file
 
-
 def replace_special_audio(original_audio, new_audio_file):
     """Main function to replace special audio file with custom audio."""
     try:
-        iv_audio_conv_path = resource_path("IVAudioConv.exe")
+        iv_audio_conv_path = get_ivaudioconv_path()
 
         print(f"Extracting .oaf and .wav from {original_audio}...")
         subprocess.run([iv_audio_conv_path, original_audio], check=True)
@@ -119,14 +220,3 @@ def replace_special_audio(original_audio, new_audio_file):
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
         raise
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python replace_audio.py <original_audio_file> <new_audio_file>")
-        sys.exit(1)
-
-    original_audio = sys.argv[1]
-    new_audio_file = sys.argv[2]
-
-    replace_special_audio(original_audio, new_audio_file)
