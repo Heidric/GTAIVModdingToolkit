@@ -50,7 +50,7 @@ exe = EXE(
     a.datas,
     [],
     name='IVRadioEditor',
-    debug=True,
+    debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
