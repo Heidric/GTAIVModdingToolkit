@@ -136,14 +136,17 @@ def modify_oaf_file(oaf_file, track_name, new_audio_duration):
     with open(oaf_file, "r") as f:
         oaf_data = json.load(f)
 
-    outro_start = int(new_audio_duration - 7000) 
-    outro_end = int(new_audio_duration - 1000) 
+    if "timestamps" in oaf_data and len(oaf_data["timestamps"]) >= 4:
+        outro_start = int(new_audio_duration - 7000) 
+        outro_end = int(new_audio_duration - 1000) 
 
-    oaf_data["timestamps"][2]["time"] = max(0, outro_start)
-    oaf_data["timestamps"][3]["time"] = max(0, outro_end)
+        oaf_data["timestamps"][2]["time"] = max(0, outro_start)
+        oaf_data["timestamps"][3]["time"] = max(0, outro_end)
 
-    for ts in oaf_data["timestamps"]:
-        ts["time"] = int(ts["time"])
+        for ts in oaf_data["timestamps"]:
+            ts["time"] = int(ts["time"])
+    else:
+        print(f"Warning: Skipping timestamp update for {oaf_file} (timestamps not found or insufficient)")
 
     base_track_name = os.path.basename(track_name)
 
