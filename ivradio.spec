@@ -12,11 +12,11 @@ a = Analysis(
     datas=[
         ('assets/radio/*.png', 'assets/radio'),
         ('assets/fonts/*.ttf', 'assets/fonts'),
-        ('replace_audio/IVAudioConv.exe', '.'),
-        ('replace_audio/bass.dll', '.'),
-        ('replace_audio/bassenc.dll', '.'),
-        ('replace_audio/bassmix.dll', '.'),
-        ('update_length/ivam.exe', '.'),
+        ('tools/IVAudioConv.exe', 'tools'),
+        ('tools/bass.dll', 'tools'),
+        ('tools/bassenc.dll', 'tools'),
+        ('tools/bassmix.dll', 'tools'),
+        ('tools/ivam.exe', 'tools'),
     ] + pyrpfiv_datas,  
     hiddenimports=[
         'PySide6.QtCore',

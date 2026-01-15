@@ -10,17 +10,18 @@ A desktop application that allows you to customize the radio experience in Grand
 ## ⚠️ Important Notes
 
 - **Game Version Compatibility**:
-  - This tool is compatible with GTA IV version 1.0.8.0, 1.2.0.43, or 1.2.0.59. If you own a legitimate copy of another version, you may temporarily use a backup of the working version's executable in your game directory for compatibility purposes. Users must own a legitimate copy of the game to use this tool.
+  - This tool is compatible with GTA IV executable version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59 (other versions are not supported). If you own a legitimate copy of another version, you may temporarily use a backup of the working version's executable in your game directory for compatibility purposes. Users must own a legitimate copy of the game to use this tool.
   - Not tested with Episodes from Liberty City (EFLC) - likely won't work
-- **File Modifications**: This tool modifies:
-  - Radio .rpf files in `\pc\audio\sfx`
-  - `\pc\audio\config\sounds.dat15` for correct timestamping
-  - **It is strongly recommended to backup these files before using the tool**
+- **File Modifications**: This tool offers two replacement methods:
+  - **FusionFix (Recommended)**: Safely modifies files in the `update` folder, leaving original game files untouched.
+  - **Direct Replacement**: Directly modifies game files (Risky - backups recommended).
+- **Dependencies**: FusionFix is required for the recommended replacement method.
 - **Disclaimer**: The creator is not responsible for any issues that may arise from the use of this application
 
 ## Features
 
 - **User-friendly Interface**: Modern, dark-themed GUI built with PySide6
+- **Safe Modding**: Supports FusionFix's `update` folder mechanism to prevent overwriting original game files
 - **Step-by-step Workflow**: Guided process for replacing songs
 - **Radio Station Support**: Aims to be compatible with all GTA IV radio stations
 - **Audio Processing**: Automatically handles audio format conversion
@@ -30,7 +31,7 @@ A desktop application that allows you to customize the radio experience in Grand
 
 - PySide6: Modern Qt-based GUI framework
 - pydub: Audio processing library
-- pyrpfiv: RPF file format parser for GTA IV (Currently unreleased - will be available on PyPI soon)
+- pyrpfiv: RPF file format parser for GTA IV (Published on [PyPI](https://pypi.org/project/pyrpfiv/))
 - qt_material: Material design styling
 
 ## Project Structure
@@ -63,17 +64,19 @@ A desktop application that allows you to customize the radio experience in Grand
 The application provides a simple workflow:
 
 1. Select your GTA IV installation directory
-2. Choose a radio station
-3. Select the song you want to replace
-4. Choose your new song file
-5. Wait for the process to complete
+2. Choose your replacement method (FusionFix is recommended for safety)
+3. Choose a radio station
+4. Select the song you want to replace
+5. Choose your new song file
+6. Wait for the process to complete
 
 ## Requirements
 
-- Grand Theft Auto IV (version 1.0.8.0, 1.2.0.43, or 1.2.0.59)
+- Grand Theft Auto IV (version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59)
 - Python 3.6 or higher
 - Required Python packages (see dependencies)
-- pyrpfiv library (upcoming release)
+- pyrpfiv library
+- FusionFix (Optional but recommended)
 
 ## File Format Support
 
@@ -82,6 +85,23 @@ The application handles audio conversion automatically, but for best results, in
 - High quality (at least 192kbps)
 - Stereo audio
 - Common formats (MP3, WAV, etc.)
+
+## Troubleshooting & Uninstalling
+
+### If using FusionFix (Recommended)
+If you encounter issues or want to revert a radio station to its original state:
+1. Navigate to your GTA IV folder -> `update` -> `pc` -> `audio` -> `sfx`.
+2. Delete the `.rpf` file corresponding to the radio station (e.g., `radio_vladivostok.rpf`).
+3. Navigate to `update` -> `pc` -> `audio` -> `config` and delete `sounds.dat15`. **Note: This will revert song length metadata for all modified stations.**
+4. The game will automatically revert to using the original vanilla files.
+
+### If using Direct Replacement
+To revert changes, you must restore the backup files you created before modding.
+**Files modified by this method:**
+- Radio .rpf files in `\pc\audio\sfx`
+- `\pc\audio\config\sounds.dat15` (for correct timestamping)
+
+If you didn't create backups, you may need to verify game files via Steam/Rockstar Launcher to restore original files.
 
 ## Contributing
 
@@ -137,10 +157,9 @@ If you are the copyright holder and have concerns about this use, please contact
 
 ## Notes
 
-- Always backup your game files before making modifications
+- Always backup your game files if using Direct Replacement
 - Ensure you have proper permissions to modify game files
-- Compatible only with GTA IV version 1.0.8.0, 1.2.0.43, or 1.2.0.59
-- The pyrpfiv library is required but currently unreleased - stay tuned for its PyPI release
+- Compatible with GTA IV version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59
 
 ## License
 

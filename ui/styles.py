@@ -147,3 +147,42 @@ PROGRESS_DIALOG_STYLE = """
         border-radius: 2px;
     }
 """
+
+RADIO_BUTTON_STYLE = """
+    QRadioButton {
+        color: white;
+        spacing: 8px;
+        padding: 4px;
+    }
+    QRadioButton::indicator {
+        width: 14px;
+        height: 14px;
+        border-radius: 8px;
+        border: 2px solid #424242;
+        background-color: #2A2A2A;
+    }
+    QRadioButton::indicator:checked {
+        border: 2px solid #FFC107;
+        background-color: #FFC107;
+    }
+    QRadioButton::indicator:hover {
+        border: 2px solid #FFD54F;
+    }
+"""
+
+GROUP_BOX_STYLE = """
+    QGroupBox {
+        color: #B0BEC5;
+        border: 1px solid #424242;
+        border-radius: 4px;
+        margin-top: 1.5em;
+        padding: 15px;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top center;
+        padding: 0 5px;
+        color: #FFC107;
+        font-weight: bold;
+    }
+"""
