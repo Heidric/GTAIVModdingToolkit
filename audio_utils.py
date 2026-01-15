@@ -103,6 +103,16 @@ def update_song_duration(gtaiv_dir, radio, song, new_length, dat15_path=None):
              shutil.copy2(dat15_file, backup_file)
              
         convert_json_to_dat15(json_path, dat15_file)
+        
+        try:
+            check_data = get_sounds_dat15_data(None, dat15_file)
+            check_len = get_song_duration(check_data, radio, song)
+            if check_len != new_length:
+                print(f"Warning: Duration update verification failed! Expected {new_length}, got {check_len}")
+            else:
+                print("Duration update verified successfully.")
+        except Exception as e:
+            print(f"Verification failed with error: {e}")
 
 def get_song_duration(data, radio, song):
     entry_name = f"{radio.upper()}_{song.upper()}"
@@ -111,21 +121,62 @@ def get_song_duration(data, radio, song):
     return 0
 
 def process_audio(track_name, new_audio_file):
-    """Process audio to generate a game-compatible WAV file."""
+    """Process audio to generate a game-compatible WAV file using FFmpeg directly."""
     output_wav = f"{track_name}.wav"
 
     try:
         if not check_ffmpeg():
             raise RuntimeError("FFmpeg is not installed. Audio processing cannot continue.")
 
+        print(f"Loading audio stats: {new_audio_file}")
         audio = AudioSegment.from_file(new_audio_file)
-        processed_audio = audio  # + silence
+        
+        # Calculate gain to reach target RMS
+        # Target -8.0 dBFS RMS
+        target_rms = -8.0
+        current_rms = audio.dBFS
+        gain_db = target_rms - current_rms
+        
+        print(f"Audio RMS: {current_rms:.2f} dBFS. Applying gain: {gain_db:.2f} dB")
 
         print(f"Generating WAV for {track_name}...")
-        processed_audio.export(output_wav, format="wav", parameters=["-ar", "32000", "-ac", "2"])
+        
+        # Construct FFmpeg command
+        # 1. highpass=f=30: Clean up sub-bass
+        # 2. volume=XdB: Apply calculated RMS gain
+        # 3. apad=pad_dur=2: Add 2 seconds padding for cutoff safety
+        # 4. alimiter: Hard limit peaks to ~ -0.5dB (0.94 linear) to prevent clipping distortion
+        #    alimiter 'limit' parameter takes linear value [0.0625 - 1]
+        # 5. Format options for compatibility (pcm_s16le, no metadata)
+        
+        filter_chain = f"highpass=f=30,volume={gain_db:.2f}dB,apad=pad_dur=2,alimiter=limit=0.94:attack=5:release=50"
+        
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', new_audio_file,
+            '-map_metadata', '-1',
+            '-ar', '32000',
+            '-ac', '2',
+            '-c:a', 'pcm_s16le',
+            '-af', filter_chain,
+            output_wav
+        ]
+        
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        if not os.path.exists(output_wav):
+             raise RuntimeError(f"FFmpeg failed to generate {output_wav}")
 
         print(f"WAV file generated: {output_wav}")
         return output_wav
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode('utf-8', errors='ignore')
+        print(f"FFmpeg error: {error_msg}")
+        raise RuntimeError(f"FFmpeg conversion failed: {error_msg}")
+    except Exception as e:
+        if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
+            raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
+        raise
     except Exception as e:
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
@@ -136,17 +187,26 @@ def modify_oaf_file(oaf_file, track_name, new_audio_duration):
     with open(oaf_file, "r") as f:
         oaf_data = json.load(f)
 
-    if "timestamps" in oaf_data and len(oaf_data["timestamps"]) >= 4:
-        outro_start = int(new_audio_duration - 7000) 
-        outro_end = int(new_audio_duration - 1000) 
+    outro_start = int(new_audio_duration - 7000) 
+    outro_end = int(new_audio_duration - 1000)
 
+    if "timestamps" not in oaf_data:
+        oaf_data["timestamps"] = []
+
+    if len(oaf_data["timestamps"]) < 4:
+        print(f"Reconstructing timestamps for {oaf_file}")
+        oaf_data["timestamps"] = [
+            {"name": "Region 1 Start", "time": 0},
+            {"name": "Region 1 End", "time": 0},
+            {"name": "Region 2 Start", "time": max(0, outro_start)},
+            {"name": "Region 2 End", "time": max(0, outro_end)}
+        ]
+    else:
         oaf_data["timestamps"][2]["time"] = max(0, outro_start)
         oaf_data["timestamps"][3]["time"] = max(0, outro_end)
 
-        for ts in oaf_data["timestamps"]:
-            ts["time"] = int(ts["time"])
-    else:
-        print(f"Warning: Skipping timestamp update for {oaf_file} (timestamps not found or insufficient)")
+    for ts in oaf_data["timestamps"]:
+        ts["time"] = int(ts["time"])
 
     base_track_name = os.path.basename(track_name)
 
@@ -208,7 +268,9 @@ def replace_special_audio(original_audio, new_audio_file):
         if not check_ffmpeg():
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.")
 
-        new_audio_duration = int(AudioSegment.from_file(new_audio_file).duration_seconds * 1000)
+        wav_audio = AudioSegment.from_file(new_wav)
+        new_audio_duration = len(wav_audio)
+        print(f"Final WAV duration: {new_audio_duration} ms")
 
         updated_oaf = modify_oaf_file(oaf_file, original_audio, new_audio_duration)
 
