@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.patch text eol=lf
+
+*.exe binary
+*.dll binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
