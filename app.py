@@ -1,5 +1,5 @@
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow
 from ui.main_window import GTAIVEditor
 from qt_material import apply_stylesheet
 from utils import check_ffmpeg, install_ffmpeg
@@ -8,7 +8,7 @@ from utils import check_ffmpeg, install_ffmpeg
 class SplashWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GTA IV Radio Editor")
+        self.setWindowTitle("GTA IV Modding Toolkit")
         self.setFixedSize(400, 200)
         self.setStyleSheet("background-color: #121212;")
 

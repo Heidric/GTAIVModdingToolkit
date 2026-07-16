@@ -1,11 +1,12 @@
 import os
 import json
+import tempfile
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QHBoxLayout, \
     QMessageBox
 from PySide6.QtCore import Qt, Signal, QSize
 from ui.styles import BUTTON_STYLE, SONG_LIST_STYLE
-from pyrpfiv import RPFParser
+from core.rpf import RPFParser
 import qtawesome as qta
 from ui.preview_player import PreviewPlayer
 from audio_utils import get_sounds_dat15_data, get_song_duration
@@ -18,40 +19,40 @@ class SongItemWidget(QWidget):
         self.song_name = song_name
         self.item = item
         self.list_widget = list_widget
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 5, 10, 5)
-        
+
         self.label = QLabel(song_name)
         self.label.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
-        
+
         self.dur_label = QLabel(duration_text)
         self.dur_label.setStyleSheet("color: #B0BEC5; font-size: 12px;")
-        
+
         self.play_btn = QPushButton()
         self.play_btn.setIcon(qta.icon('mdi.play', color='white'))
         self.play_btn.setFixedSize(30, 30)
         self.play_btn.setStyleSheet("background-color: transparent; border: none;")
         self.play_btn.clicked.connect(self.on_click)
-        
+
         self.loading_label = QLabel("Loading...")
         self.loading_label.setStyleSheet("color: #FFC107; font-size: 10px;")
         self.loading_label.hide()
-        
+
         layout.addWidget(self.label)
         layout.addStretch()
         layout.addWidget(self.dur_label)
         layout.addSpacing(15)
         layout.addWidget(self.loading_label)
         layout.addWidget(self.play_btn)
-        
+
     def on_click(self):
         self.preview_clicked.emit(self.song_name)
 
     def mousePressEvent(self, event):
         self.list_widget.setCurrentItem(self.item)
         super().mousePressEvent(event)
-        
+
     def set_playing(self, playing):
         self.loading_label.hide()
         self.play_btn.show()
@@ -63,7 +64,7 @@ class SongItemWidget(QWidget):
     def set_paused(self, paused):
         if paused:
             self.play_btn.setIcon(qta.icon('mdi.play', color='#FFC107'))
-            
+
     def set_loading(self, loading):
         if loading:
             self.play_btn.hide()
@@ -80,14 +81,14 @@ class SongSelectPage(QWidget):
         self.selected_radio = selected_radio
         self.on_next = on_next
         self.on_back = on_back
-        
+
         self.player = PreviewPlayer()
         self.player.playback_started.connect(self.on_playback_started)
         self.player.playback_paused.connect(self.on_playback_paused)
         self.player.playback_stopped.connect(self.on_playback_stopped)
         self.player.extraction_started.connect(self.on_extraction_started)
         self.player.error_occurred.connect(self.on_preview_error)
-        
+
         self.dat15_data = {}
         self.song_widgets = {}
         self.current_preview_song = None
@@ -134,17 +135,25 @@ class SongSelectPage(QWidget):
         rpf_rel_path = f"pc/audio/sfx/{self.selected_radio}"
         update_rpf_path = os.path.join(self.gtaiv_path, "update", rpf_rel_path)
         orig_rpf_path = os.path.join(self.gtaiv_path, rpf_rel_path)
-        
+
         if os.path.exists(update_rpf_path):
             rpf_path = os.path.abspath(update_rpf_path)
         else:
             rpf_path = os.path.abspath(orig_rpf_path)
 
         self.parser = RPFParser(rpf_path, os.path.abspath(os.path.join(self.gtaiv_path, "GTAIV.exe")))
-        self.parser.save_json("radio_temp.json")
+        temp_json_path = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="gtaiv_radio_", suffix=".json", delete=False) as temp_json:
+                temp_json_path = temp_json.name
 
-        with open("radio_temp.json", "r") as f:
-            data = json.load(f)
+            self.parser.save_json(temp_json_path)
+
+            with open(temp_json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        finally:
+            if temp_json_path and os.path.exists(temp_json_path):
+                os.remove(temp_json_path)
 
         songs = []
         for directory in data.get("directories", []):
@@ -152,8 +161,6 @@ class SongSelectPage(QWidget):
                 for file in directory["files"]:
                     if not file["name"].startswith("ID_") and not file["name"].startswith("SOLO_"):
                         songs.append(file["name"])
-
-        os.remove("radio_temp.json")
 
         if not songs:
             QMessageBox.warning(self, "No Songs Found", "No songs found in the selected radio.",
@@ -164,17 +171,17 @@ class SongSelectPage(QWidget):
         radio_name = self.selected_radio[:-4].upper()
         for song in songs:
             item = QListWidgetItem(self.song_list)
-            item.setSizeHint(QSize(0, 50)) 
-            
+            item.setSizeHint(QSize(0, 50))
+
             duration_ms = get_song_duration(self.dat15_data, radio_name, song)
             duration_text = self.format_duration(duration_ms)
-            
+
             widget = SongItemWidget(song, duration_text, item, self.song_list)
             widget.preview_clicked.connect(self.play_preview)
-            
+
             self.song_list.setItemWidget(item, widget)
             self.song_widgets[song] = widget
-            
+
             item.setData(Qt.UserRole, song)
 
     def format_duration(self, ms):
@@ -187,7 +194,7 @@ class SongSelectPage(QWidget):
     def play_preview(self, song_name):
         radio_name = self.selected_radio[:-4].upper()
         duration = get_song_duration(self.dat15_data, radio_name, song_name)
-        
+
         self.current_preview_song = song_name
         self.player.preview_song(self.gtaiv_path, self.selected_radio, song_name, duration, self.parser)
 
@@ -204,7 +211,7 @@ class SongSelectPage(QWidget):
         if song_name in self.song_widgets:
             self.song_widgets[song_name].set_loading(False)
             self.song_widgets[song_name].set_playing(False)
-        
+
         if self.current_preview_song == song_name:
             self.current_preview_song = None
 
@@ -217,7 +224,7 @@ class SongSelectPage(QWidget):
 
     def proceed(self):
         self.player.stop_playback()
-        
+
         selected_item = self.song_list.currentItem()
         if not selected_item:
             QMessageBox.warning(self, "No Song Selected", "Please select a song to replace.",

@@ -1,3 +1,5 @@
+import os
+
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, \
     QMessageBox
 from PySide6.QtCore import Qt
@@ -46,13 +48,13 @@ class ReplacePage(QWidget):
         self.layout.addLayout(buttons_layout)
 
     def browse_file(self):
-        new_song_path, _ = QFileDialog.getOpenFileName(self, "Select New Song", filter="Audio Files (*.mp3 *.wav)")
+        new_song_path, _ = QFileDialog.getOpenFileName(self, "Select New Song", filter="Audio Files (*.mp3 *.wav *.ogg)")
         if new_song_path:
             self.new_song_input.setText(new_song_path)
 
     def replace(self):
         new_song_path = self.new_song_input.text().strip()
-        if not new_song_path:
+        if not new_song_path or not os.path.isfile(new_song_path):
             QMessageBox.warning(self, "Invalid File", "Please select a valid audio file.",
                                 QMessageBox.StandardButton.Ok,
                                 QMessageBox.StandardButton.NoButton)

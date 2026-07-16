@@ -5,7 +5,7 @@ import tempfile
 import atexit
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal, QThread
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from pyrpfiv import RPFParser
+from core.rpf import RPFParser
 from utils import resource_path
 from audio_utils import get_ivaudioconv_path
 

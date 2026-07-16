@@ -9,9 +9,10 @@ from ui.pages.progress import ProgressPage
 from audio_utils import replace_special_audio, update_song_duration
 from utils import install_ffmpeg, check_ffmpeg
 from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
-from pyrpfiv import RPFParser
+from core.rpf import RPFParser
 import os
 import shutil
+import tempfile
 from PySide6.QtCore import QThread, Signal
 
 
@@ -31,7 +32,7 @@ class ReplaceSongWorker(QThread):
     def run(self):
         try:
             print("Worker started")
-            
+
             # Select strategy
             if self.use_direct:
                 strategy = DirectReplacementStrategy(self.gtaiv_path)
@@ -46,7 +47,7 @@ class ReplaceSongWorker(QThread):
 
             rpf_path = strategy.get_rpf_path(self.selected_radio)
             dat15_path = strategy.get_dat15_path()
-            
+
             radio_name = self.selected_radio[:-4].upper()
             full_song_path = f"{radio_name}/{self.selected_song}"
             print(f"RPF Path: {rpf_path}")
@@ -54,31 +55,31 @@ class ReplaceSongWorker(QThread):
             print(f"Full Song Path: {full_song_path}")
 
             parser = RPFParser(rpf_path, os.path.join(self.gtaiv_path, "GTAIV.exe"))
-            output_folder = "temp_extracted"
-            os.makedirs(output_folder, exist_ok=True)
-            parser.extract_file(full_song_path, output_folder)
+            output_folder = tempfile.mkdtemp(prefix="gtaiv_radio_replace_")
+            try:
+                parser.extract_file(full_song_path, output_folder)
 
-            extracted_file = os.path.join(output_folder, self.selected_song)
+                extracted_file = os.path.join(output_folder, self.selected_song)
 
-            self.progress.emit(25)
-            print("Progress 25%")
+                self.progress.emit(25)
+                print("Progress 25%")
 
-            replace_special_audio(extracted_file, self.new_song_path)
-            self.progress.emit(50)
-            print("Progress 50%")
+                replace_special_audio(extracted_file, self.new_song_path)
+                self.progress.emit(50)
+                print("Progress 50%")
 
-            audio = AudioSegment.from_file(self.new_song_path)
-            new_song_length = int(audio.duration_seconds * 1000)
-            
-            # Pass the explicit dat15 path to update_song_duration
-            update_song_duration(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
-            
-            self.progress.emit(75)
-            print("Progress 75%")
+                audio = AudioSegment.from_file(self.new_song_path)
+                new_song_length = int(audio.duration_seconds * 1000)
 
-            parser.add_file(extracted_file, full_song_path)
+                # Pass the explicit dat15 path to update_song_duration
+                update_song_duration(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
 
-            shutil.rmtree(output_folder)
+                self.progress.emit(75)
+                print("Progress 75%")
+
+                parser.add_file(extracted_file, full_song_path)
+            finally:
+                shutil.rmtree(output_folder, ignore_errors=True)
             self.progress.emit(100)
             print("Progress 100%")
             self.finished.emit()
@@ -103,7 +104,7 @@ class GTAIVEditor(QMainWindow):
         self.replace_page = None
         self.progress_page = ProgressPage(on_cancel=self.cancel_replace)
 
-        self.setWindowTitle("GTA IV Radio Editor")
+        self.setWindowTitle("GTA IV Modding Toolkit")
         self.setMinimumSize(800, 600)
 
         self.stack = QStackedWidget()
