@@ -179,53 +179,54 @@ def process_audio(track_name, new_audio_file):
         raise
     except Exception as e:
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
-            raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
-        raise
+            raise RuntimeError(
+                "FFmpeg is required for audio processing. "
+                f"Diagnostic files preserved at: {diagnostic_dir}"
+            ) from e
+        raise RuntimeError(diagnostic_message) from e
 
 def modify_oaf_file(oaf_file, track_name, new_audio_duration):
-    """Modify the .oaf file to update DJ timestamps and ensure correct channel relationships."""
-    with open(oaf_file, "r") as f:
+    """Update only metadata that is safe for the extracted OAF layout."""
+    with open(oaf_file, "r", encoding="utf-8") as f:
         oaf_data = json.load(f)
 
-    outro_start = int(new_audio_duration - 7000) 
-    outro_end = int(new_audio_duration - 1000)
+    if new_audio_duration <= 0:
+        raise ValueError("The generated WAV must have a positive duration.")
 
-    if "timestamps" not in oaf_data:
-        oaf_data["timestamps"] = []
+    timestamps = oaf_data.get("timestamps")
+    has_standard_radio_regions = isinstance(timestamps, list) and len(timestamps) >= 4
 
-    if len(oaf_data["timestamps"]) < 4:
-        print(f"Reconstructing timestamps for {oaf_file}")
-        oaf_data["timestamps"] = [
-            {"name": "Region 1 Start", "time": 0},
-            {"name": "Region 1 End", "time": 0},
-            {"name": "Region 2 Start", "time": max(0, outro_start)},
-            {"name": "Region 2 End", "time": max(0, outro_end)}
-        ]
+    if has_standard_radio_regions:
+        outro_end = max(0, new_audio_duration - 1000)
+        outro_start = max(0, min(outro_end, new_audio_duration - 7000))
+
+        timestamps[2]["time"] = int(outro_start)
+        timestamps[3]["time"] = int(outro_end)
+
+        for timestamp in timestamps:
+            if isinstance(timestamp, dict) and "time" in timestamp:
+                timestamp["time"] = int(timestamp["time"])
+
+        # Preserve every converter-specific channel field. Only repair the
+        # names/defaults when this is the ordinary two-channel radio layout.
+        channels = oaf_data.get("channels")
+        if isinstance(channels, list) and len(channels) == 2:
+            base_track_name = os.path.basename(track_name)
+            for channel, suffix in zip(channels, ("LEFT", "RIGHT")):
+                if not isinstance(channel, dict):
+                    continue
+                channel["name"] = f"{base_track_name}_{suffix}"
+                channel.setdefault("compression", "ADPCM")
+                channel.setdefault("headroom", 136)
     else:
-        oaf_data["timestamps"][2]["time"] = max(0, outro_start)
-        oaf_data["timestamps"][3]["time"] = max(0, outro_end)
-
-    for ts in oaf_data["timestamps"]:
-        ts["time"] = int(ts["time"])
-
-    base_track_name = os.path.basename(track_name)
-
-    # Fix channels relationships
-    oaf_data["channels"] = [
-        {
-            "name": f"{base_track_name}_LEFT",
-            "compression": "ADPCM",
-            "headroom": 136
-        },
-        {
-            "name": f"{base_track_name}_RIGHT",
-            "compression": "ADPCM",
-            "headroom": 136
-        }
-    ]
+        timestamp_count = len(timestamps) if isinstance(timestamps, list) else 0
+        print(
+            f"Non-standard OAF layout detected ({timestamp_count} timestamps). "
+            "Preserving timestamps and channels exactly as extracted."
+        )
 
     updated_oaf_file = f"{track_name}.oaf"
-    with open(updated_oaf_file, "w") as f:
+    with open(updated_oaf_file, "w", encoding="utf-8") as f:
         json.dump(oaf_data, f, indent=4)
 
     print(f"Updated .oaf file: {updated_oaf_file}")
@@ -248,7 +249,21 @@ def convert_back_to_special_audio(track_name):
         raise FileNotFoundError(f"Error: {wav_file} not found.")
 
     print(f"Converting updated files back into special audio format for {track_name}...")
-    subprocess.run([iv_audio_conv_path, oaf_file, wav_file], check=True)
+    result = subprocess.run(
+        [iv_audio_conv_path, oaf_file, wav_file],
+        text=True,
+        capture_output=True,
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip())
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"IVAudioConv failed with exit code {result.returncode}. "
+            f"stdout: {result.stdout.strip() or '<empty>'}; "
+            f"stderr: {result.stderr.strip() or '<empty>'}"
+        )
     special_audio_file = track_name
     print(f"Special audio file created: {special_audio_file}")
     return special_audio_file
@@ -264,6 +279,7 @@ def replace_special_audio(original_audio, new_audio_file):
         wav_file = f"{original_audio}.wav"
 
         new_wav = process_audio(original_audio, new_audio_file)
+        shutil.copy2(oaf_file, f"{oaf_file}.original")
 
         if not check_ffmpeg():
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.")
@@ -284,4 +300,18 @@ def replace_special_audio(original_audio, new_audio_file):
     except Exception as e:
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
             raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
+        diagnostic_dir = tempfile.mkdtemp(prefix="gtaiv_audio_failure_")
+        diagnostic_candidates = (
+            original_audio,
+            f"{original_audio}.oaf",
+            f"{original_audio}.oaf.original",
+            f"{original_audio}.wav",
+        )
+        for candidate in diagnostic_candidates:
+            if os.path.exists(candidate):
+                shutil.copy2(candidate, os.path.join(diagnostic_dir, os.path.basename(candidate)))
+
+        diagnostic_message = f"{e}\nDiagnostic files preserved at: {diagnostic_dir}"
+        print(diagnostic_message)
+
         raise
