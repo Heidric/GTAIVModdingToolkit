@@ -1,170 +1,249 @@
-# IV Radio Editor
+# GTA IV Modding Toolkit
 
-A desktop application that allows you to customize the radio experience in Grand Theft Auto IV by replacing songs while maintaining the game's audio format and integrity.
+A Windows desktop toolkit for modifying Grand Theft Auto IV assets.
+
+[![Tests](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml/badge.svg)](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml)
 
 <div style="display: flex; justify-content: space-between; margin: 20px 0;">
-    <img src="assets/image.png" alt="Radio station selection interface showing a grid of GTA IV radio station logos with their names" width="400"/>
-    <img src="assets/image-1.png" alt="Song replacement interface displaying a list of songs from the selected radio station with options to choose a replacement track" width="400"/>
+    <img src="assets/image.png" alt="Radio station selection interface" width="400"/>
+    <img src="assets/image-1.png" alt="Radio track selection interface" width="400"/>
 </div>
 
-## ⚠️ Important Notes
+## Current scope
 
-- **Game Version Compatibility**:
-  - This tool is compatible with GTA IV executable version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59 (other versions are not supported). If you own a legitimate copy of another version, you may temporarily use a backup of the working version's executable in your game directory for compatibility purposes. Users must own a legitimate copy of the game to use this tool.
-  - Not tested with Episodes from Liberty City (EFLC) - likely won't work
-- **File Modifications**: This tool offers two replacement methods:
-  - **FusionFix (Recommended)**: Safely modifies files in the `update` folder, leaving original game files untouched.
-  - **Direct Replacement**: Directly modifies game files (Risky - backups recommended).
-- **Dependencies**: FusionFix is required for the recommended replacement method.
-- **Disclaimer**: The creator is not responsible for any issues that may arise from the use of this application
+The toolkit currently modifies existing radio-track slots in the GTA IV base game. It does not create new stations or new track slots.
 
-## Features
+Implemented features:
 
-- **User-friendly Interface**: Modern, dark-themed GUI built with PySide6
-- **Safe Modding**: Supports FusionFix's `update` folder mechanism to prevent overwriting original game files
-- **Step-by-step Workflow**: Guided process for replacing songs
-- **Radio Station Support**: Aims to be compatible with all GTA IV radio stations
-- **Audio Processing**: Automatically handles audio format conversion
-- **Metadata Updates**: Updates song length and metadata in game files
+- Browse GTA IV radio stations and their existing track slots.
+- Preview extracted station tracks from the application.
+- Replace one track at a time.
+- Replace multiple tracks in one transactional batch.
+- Automatically match batch input files to track slots by normalized filename.
+- Review and change every batch mapping before processing.
+- Prevent duplicate target slots within one batch.
+- Update track durations in `sounds.dat15`.
+- Preserve non-standard OAF timestamp and channel layouts when they cannot be safely rewritten.
+- Remember the last directory used by game, audio, and other file pickers.
 
-## Dependencies
+### Input formats
 
-- PySide6: Modern Qt-based GUI framework
-- pydub: Audio processing library
-- pyrpfiv: RPF file format parser for GTA IV (Published on [PyPI](https://pypi.org/project/pyrpfiv/))
-- qt_material: Material design styling
+The single-track picker accepts:
 
-## Project Structure
+- MP3
+- WAV
+- OGG
 
-```
-├── app.py                  # Main application entry point
-├── ui/                     # User interface components
-│   ├── main_window.py     # Main application window
-│   ├── pages/             # Individual page implementations
-│   │   ├── intro.py       # Game directory selection
-│   │   ├── radio_select.py# Radio station selection
-│   │   ├── song_select.py # Song selection
-│   │   ├── replace.py     # New song selection
-│   │   └── progress.py    # Progress tracking
-│   ├── signals.py         # Qt signals
-│   ├── styles.py          # UI styling
-│   └── widgets.py         # Custom widgets
-├── replace_audio/         # Audio replacement functionality
-│   ├── replace_audio.py   # Audio conversion logic
-│   └── *.dll             # Required audio processing libraries
-├── update_length/         # Song length updating
-│   └── update_song_length.py  # Length modification logic
-└── assets/               # Application assets
-    ├── fonts/           # Custom fonts
-    └── radio/           # Radio station images
+The batch picker additionally exposes:
+
+- FLAC
+- AAC
+- M4A
+
+Actual decoding is performed through FFmpeg and pydub, so support also depends on the installed FFmpeg build.
+
+## Safety model
+
+### FusionFix mode — recommended
+
+FusionFix mode creates or updates override files under:
+
+```text
+<gtaiv>/update/pc/audio/sfx/
+<gtaiv>/update/pc/audio/config/
 ```
 
-## How It Works
+The original files under `pc/audio/...` remain untouched.
 
-The application provides a simple workflow:
+### Direct replacement mode — risky
 
-1. Select your GTA IV installation directory
-2. Choose your replacement method (FusionFix is recommended for safety)
-3. Choose a radio station
-4. Select the song you want to replace
-5. Choose your new song file
-6. Wait for the process to complete
+Direct mode modifies the original files under:
+
+```text
+<gtaiv>/pc/audio/sfx/
+<gtaiv>/pc/audio/config/
+```
+
+Before modification, the toolkit creates timestamped backups next to the original RPF and `sounds.dat15` files.
+
+### Transactional batch replacement
+
+Batch replacement operates on staging copies of both the selected station RPF and `sounds.dat15`:
+
+1. Every selected source file is validated, extracted, and converted.
+2. Duration metadata is updated in the staged `sounds.dat15`.
+3. Every converted track is packed into the staged RPF.
+4. Oversized entries are relocated instead of overwriting adjacent RPF data.
+5. The staged RPF is reopened.
+6. Every replacement is extracted again and compared with the packed source using SHA-256.
+7. Active files are replaced only after all conversions and verification checks pass.
+
+A failed or cancelled batch does not commit partial staged changes. If the final file swap itself fails, the worker restores rollback copies.
+
+## RPF handling
+
+The toolkit vendors a patched copy of `pyrpfiv` under `vendor/pyrpfiv/`.
+
+When replacing an RPF entry:
+
+- the existing name hash and TOC position are preserved;
+- a replacement that fits remains at its current offset;
+- a replacement that exceeds the current slot is appended at an `0x800`-aligned end-of-file offset;
+- the encrypted or unencrypted RPF3 TOC is updated with the new size and offset;
+- the new offset is constrained to the 31-bit RPF3 file-offset range.
+
+## GTAIV.exe compatibility
+
+The parser needs the GTA IV RPF AES key. The toolkit first checks known key offsets for established executable versions:
+
+- 1.0.4.0
+- 1.0.4r2
+- 1.0.6.0
+- 1.0.7.0
+- 1.0.8.0
+- 1.2.0.32
+- 1.2.0.43
+- 1.2.0.59
+
+If those offsets do not match, the toolkit scans the selected `GTAIV.exe` for the same already-known key bytes at another location. This supports executable builds where the known key moved, but it cannot derive a genuinely new or obfuscated key.
+
+An explicit key can be supplied through the vendored parser API, although the GUI does not currently expose that override.
 
 ## Requirements
 
-- Grand Theft Auto IV (version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59)
-- Python 3.6 or higher
-- Required Python packages (see dependencies)
-- pyrpfiv library
-- FusionFix (Optional but recommended)
+- Grand Theft Auto IV.
+- Python 3.12.
+- FFmpeg available through `PATH`.
+- FusionFix for the recommended override-based replacement mode.
 
-## File Format Support
+The application can offer to install FFmpeg when it is missing. Manual installation is also supported.
 
-The application handles audio conversion automatically, but for best results, input audio files should be:
+Episodes from Liberty City support has not been validated.
 
-- High quality (at least 192kbps)
-- Stereo audio
-- Common formats (MP3, WAV, etc.)
+## Installation
 
-## Troubleshooting & Uninstalling
+```bash
+git clone https://github.com/Heidric/GTAIVModdingToolkit.git
+cd GTAIVModdingToolkit
+py -3.12 -m venv .venv
+.venv/Scripts/python.exe -m pip install --upgrade pip
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+```
 
-### If using FusionFix (Recommended)
-If you encounter issues or want to revert a radio station to its original state:
-1. Navigate to your GTA IV folder -> `update` -> `pc` -> `audio` -> `sfx`.
-2. Delete the `.rpf` file corresponding to the radio station (e.g., `radio_vladivostok.rpf`).
-3. Navigate to `update` -> `pc` -> `audio` -> `config` and delete `sounds.dat15`. **Note: This will revert song length metadata for all modified stations.**
-4. The game will automatically revert to using the original vanilla files.
+Run the application:
 
-### If using Direct Replacement
-To revert changes, you must restore the backup files you created before modding.
-**Files modified by this method:**
-- Radio .rpf files in `\pc\audio\sfx`
-- `\pc\audio\config\sounds.dat15` (for correct timestamping)
+```bash
+.venv/Scripts/python.exe app.py
+```
 
-If you didn't create backups, you may need to verify game files via Steam/Rockstar Launcher to restore original files.
+## Usage
 
-## Contributing
+### Single-track replacement
 
-Support in maintaining and updating this tool is appreciated, especially for:
+1. Select the GTA IV installation directory.
+2. Select FusionFix or direct replacement mode.
+3. Select a radio station.
+4. Select an existing track slot.
+5. Select an MP3, WAV, or OGG replacement.
+6. Wait for conversion, duration update, and RPF write to complete.
+7. Test the modified station in game.
 
-- Testing and adding support for Episodes from Liberty City (EFLC)
-- Improving compatibility with different game versions
-- Bug fixes and feature enhancements
+### Batch replacement
 
-## Acknowledgments
+1. Open a radio station.
+2. Select **Batch Replace**.
+3. Add one or more audio files.
+4. Review or change the target slot assigned to each file.
+5. Confirm that every target slot is unique.
+6. Select **Replace All**.
+7. Wait for conversion, staging, byte verification, and commit to complete.
+8. Test the modified station in game.
 
-This project utilizes several third-party tools and libraries:
+The batch page displays the number of replaceable slots, selected files, and remaining slots before processing starts.
 
-### RAGE Audio Toolkit + Audio Editor
+## Reverting changes
 
-- Created by [AndrewMulti](https://github.com/AndrewMulti)
-- Repository: [RAGE-Audio-Toolkit](https://github.com/AndrewMulti/RAGE-Audio-Toolkit/tree/main)
-- Used for audio file processing and conversion
+### FusionFix mode
+
+To remove a station override, delete its RPF from:
+
+```text
+<gtaiv>/update/pc/audio/sfx/
+```
+
+Track durations are stored in:
+
+```text
+<gtaiv>/update/pc/audio/config/sounds.dat15
+```
+
+Deleting the overridden `sounds.dat15` reverts duration metadata for every station represented by that override file.
+
+### Direct replacement mode
+
+Restore the timestamped backups created next to the modified files. If no usable backup remains, restore the original game files through the game platform's file-verification mechanism.
+
+## Development and tests
+
+Install the test dependencies:
+
+```bash
+.venv/Scripts/python.exe -m pip install -r requirements-test.txt
+```
+
+Run the regression suite:
+
+```bash
+.venv/Scripts/python.exe -m pytest -q
+```
+
+Compile-check the tested Python modules:
+
+```bash
+.venv/Scripts/python.exe -m compileall -q core vendor tests
+```
+
+GitHub Actions runs the compile check and test suite on Windows with Python 3.12 for pushes and pull requests.
+
+The synthetic tests do not require GTA IV files and cover:
+
+- AES-key normalization and unknown-offset scanning;
+- encrypted and unencrypted RPF3 TOCs;
+- capacity calculation from the next entry or archive end;
+- in-place replacement with smaller and exact-capacity payloads;
+- oversized-entry relocation to aligned EOF;
+- preservation of adjacent entries;
+- TOC persistence after reopening an archive;
+- extracted-byte verification;
+- missing-path and invalid-offset failures.
+
+## Third-party components
+
+### RAGE Audio Toolkit and GTA IV Audio Editor
+
+Created by [AndrewMulti](https://github.com/AndrewMulti). The bundled command-line tools are used for extracting and rebuilding GTA IV audio assets and `sounds.dat15` metadata.
 
 ### BASS Audio Library
 
-- Developed by [Un4seen Developments](https://www.un4seen.com/)
-- Components used:
-  - BASS: Core audio library
-  - BASSmix: Audio mixing functionality
-  - BASSenc: Audio encoding capabilities
+Developed by [Un4seen Developments](https://www.un4seen.com/). Runtime components used by the bundled audio tools include BASS, BASSmix, and BASSenc.
 
-### IV Audio Editor (ivam.exe)
+### pyrpfiv
 
-- Created by [AndrewMulti](https://github.com/AndrewMulti)
-- Used for metadata editing
-- Handles conversion of sounds.dat15 to JSON and back
-- Integrated with update_song_length.py for metadata updates
+The project vendors and modifies `pyrpfiv`, originally by gmroder, under its MIT license. See:
 
-### GTA Forums Community
+- `vendor/pyrpfiv/LICENSE`
+- `vendor/pyrpfiv/THIRD_PARTY_NOTICES.md`
 
-- Special thanks to [MeshugaPalejo](https://gtaforums.com/profile/1170841-meshugapalejo/) for their comprehensive [guide on replacing radio songs](https://gtaforums.com/topic/977470-guide-to-replacing-songs-on-existing-radio-stations/)
+### GTA Forums community
 
-This tool automates the manual processes described in the guide
+The original radio-replacement workflow was informed by MeshugaPalejo's GTA Forums guide to replacing songs on existing radio stations.
 
-## Disclaimer
+## Legal and safety notice
 
-This project includes radio station logos from _Grand Theft Auto IV_, originally created by Rockstar Games. These logos are provided for identification and visual purposes only.
+Use the toolkit only with game files you are legally entitled to modify. The repository does not include GTA IV game archives or executable files.
 
-The logos were sourced from [HQ Radio Icons 1.2 by Sborges98](https://www.gtainside.com/en/gta4/mods/107596-hq-radio-icons-1-2) and are used under the belief that their inclusion qualifies as **fair use** under copyright law. Specifically:
-
-- The logos are presented in a non-commercial, fan-made project.
-- Their use is limited to aiding users in identifying radio stations within the game.
-- This project does not include any other proprietary game assets or facilitate piracy.
-- This project does not facilitate piracy, circumvent DRM protections, or include any copyrighted game files, aside from third-party assets used under the belief of fair use.
-
-If you are the copyright holder and have concerns about this use, please contact me, and I will address the issue promptly.
-
-## Notes
-
-- Always backup your game files if using Direct Replacement
-- Ensure you have proper permissions to modify game files
-- Compatible with GTA IV version 1.0.4.0, 1.0.4r2, 1.0.6.0, 1.0.7.0, 1.0.8.0, 1.2.0.32, 1.2.0.43, or 1.2.0.59
+Radio-station logos included under `assets/` are used for identification in this non-commercial fan-made project. The logos were sourced from *HQ Radio Icons 1.2* by Sborges98. Rights to GTA IV and its original assets belong to their respective owners.
 
 ## License
 
-This project is licensed under the MIT License.
-
-You are free to use, modify, and distribute this software, provided that proper attribution is given to the original author. This software is provided "as is," without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.
-
-See the [LICENSE](LICENSE) file for the full license text.
+The toolkit is licensed under the MIT License. See [LICENSE](LICENSE).
