@@ -1,9 +1,9 @@
 import os
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, \
-    QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QMessageBox
 from PySide6.QtCore import Qt
 from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE
+from ui.path_dialogs import PathHistoryKey, remember_directory, select_open_file
 
 
 class ReplacePage(QWidget):
@@ -48,7 +48,13 @@ class ReplacePage(QWidget):
         self.layout.addLayout(buttons_layout)
 
     def browse_file(self):
-        new_song_path, _ = QFileDialog.getOpenFileName(self, "Select New Song", filter="Audio Files (*.mp3 *.wav *.ogg)")
+        new_song_path = select_open_file(
+            self,
+            "Select New Song",
+            PathHistoryKey.REPLACEMENT_AUDIO,
+            file_filter="Audio Files (*.mp3 *.wav *.ogg)",
+            fallback=self.new_song_input.text().strip(),
+        )
         if new_song_path:
             self.new_song_input.setText(new_song_path)
 
@@ -60,4 +66,5 @@ class ReplacePage(QWidget):
                                 QMessageBox.StandardButton.NoButton)
             return
 
+        remember_directory(PathHistoryKey.REPLACEMENT_AUDIO, new_song_path)
         self.on_replace(new_song_path)

@@ -1,10 +1,16 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QPushButton, QFileDialog, QMessageBox, QGroupBox, QRadioButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLineEdit, QPushButton, QMessageBox, QGroupBox, QRadioButton
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 
 from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE, RADIO_BUTTON_STYLE, GROUP_BOX_STYLE
 from replacement_strategy import check_fusionfix_installed
+from ui.path_dialogs import (
+    PathHistoryKey,
+    get_remembered_directory,
+    remember_directory,
+    select_existing_directory,
+)
 
 
 class IntroPage(QWidget):
@@ -19,6 +25,7 @@ class IntroPage(QWidget):
         self.path_input.setPlaceholderText("Enter the GTA IV installation directory...")
         self.path_input.setFixedWidth(400)
         self.path_input.setStyleSheet(LINE_EDIT_STYLE)
+        self.path_input.setText(get_remembered_directory(PathHistoryKey.GTA_IV_INSTALLATION))
         self.layout.addWidget(self.path_input, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.browse_button = QPushButton("Browse", self)
@@ -51,7 +58,12 @@ class IntroPage(QWidget):
         self.layout.addWidget(self.next_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def browse_directory(self):
-        path = QFileDialog.getExistingDirectory(self, "Select GTA IV Directory")
+        path = select_existing_directory(
+            self,
+            "Select GTA IV Directory",
+            PathHistoryKey.GTA_IV_INSTALLATION,
+            fallback=self.path_input.text().strip(),
+        )
         if path:
             self.path_input.setText(path)
 
@@ -63,6 +75,7 @@ class IntroPage(QWidget):
                                 QMessageBox.StandardButton.NoButton)
             return
 
+        remember_directory(PathHistoryKey.GTA_IV_INSTALLATION, gtaiv_path)
         use_direct = self.direct_radio.isChecked()
 
         if not use_direct:

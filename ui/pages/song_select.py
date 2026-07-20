@@ -75,12 +75,13 @@ class SongItemWidget(QWidget):
 
 
 class SongSelectPage(QWidget):
-    def __init__(self, gtaiv_path, selected_radio, on_next, on_back):
+    def __init__(self, gtaiv_path, selected_radio, on_next, on_back, on_batch=None):
         super().__init__()
         self.gtaiv_path = gtaiv_path
         self.selected_radio = selected_radio
         self.on_next = on_next
         self.on_back = on_back
+        self.on_batch = on_batch
 
         self.player = PreviewPlayer()
         self.player.playback_started.connect(self.on_playback_started)
@@ -93,6 +94,7 @@ class SongSelectPage(QWidget):
         self.song_widgets = {}
         self.current_preview_song = None
         self.parser = None
+        self.songs = []
 
         self.layout = QVBoxLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -112,6 +114,12 @@ class SongSelectPage(QWidget):
         self.back_button.clicked.connect(self.on_back)
         self.back_button.setStyleSheet(BUTTON_STYLE)
         buttons_layout.addWidget(self.back_button)
+
+        self.batch_button = QPushButton("Batch Replace", self)
+        self.batch_button.clicked.connect(self.proceed_batch)
+        self.batch_button.setStyleSheet(BUTTON_STYLE)
+        self.batch_button.setEnabled(self.on_batch is not None)
+        buttons_layout.addWidget(self.batch_button)
 
         self.next_button = QPushButton("Next", self)
         self.next_button.clicked.connect(self.proceed)
@@ -168,6 +176,8 @@ class SongSelectPage(QWidget):
                                 QMessageBox.StandardButton.NoButton)
             return
 
+        self.songs = list(songs)
+
         radio_name = self.selected_radio[:-4].upper()
         for song in songs:
             item = QListWidgetItem(self.song_list)
@@ -221,6 +231,11 @@ class SongSelectPage(QWidget):
 
     def on_preview_error(self, msg):
         QMessageBox.warning(self, "Preview Error", f"Failed to play preview: {msg}")
+
+    def proceed_batch(self):
+        self.player.stop_playback()
+        if self.on_batch is not None:
+            self.on_batch(list(self.songs))
 
     def proceed(self):
         self.player.stop_playback()
