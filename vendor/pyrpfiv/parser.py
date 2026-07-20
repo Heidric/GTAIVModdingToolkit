@@ -66,6 +66,8 @@ class RPFParser:
             header_data = f.read(HEADER_SIZE)
             identifier = header_data[0:4].decode('ascii')
             toc_size, entry_count, unknown, encrypted = struct.unpack('<IiiI', header_data[4:20])
+            self.toc_size = toc_size
+            self.encrypted = encrypted != 0
 
             print(f"RPF Version: {identifier}")
             print(f"TOC Size: {toc_size}")
@@ -237,6 +239,26 @@ class RPFParser:
         print(f"Extracted: {file_path} -> {output_path}")
         return True
 
+    def get_file_capacity(self, file_path):
+        """Return the writable byte range at the file's current RPF offset."""
+        file_entry = next((entry for entry in self.paths if entry['path'] == file_path), None)
+        if not file_entry:
+            raise FileNotFoundInRPFError(f"File not found in RPF archive: {file_path}")
+
+        later_offsets = [
+            entry['offset']
+            for entry in self.paths
+            if entry['offset'] > file_entry['offset']
+        ]
+        if later_offsets:
+            return min(later_offsets) - file_entry['offset']
+
+        return os.path.getsize(self.rpf_filename) - file_entry['offset']
+
+    @staticmethod
+    def _align_up(value, alignment=0x800):
+        return (value + alignment - 1) & ~(alignment - 1)
+
     def add_file(self, source_file, rpf_path):
         """Replace a file in the RPF archive, preserving the original hash and structure."""
         if not os.path.exists(source_file):
@@ -264,17 +286,34 @@ class RPFParser:
         with open(source_file, 'rb') as f:
             file_data = f.read()
 
+        current_capacity = self.get_file_capacity(rpf_path)
+        target_offset = existing_entry['offset']
+
         with open(self.rpf_filename, 'rb+') as rpf:
             rpf.seek(TOC_START_OFFSET)
-            original_toc = rpf.read(2048)
+            original_toc = rpf.read(self.toc_size)
 
-            encrypted = True
-            if encrypted:
+            if self.encrypted:
                 original_toc = decrypt_toc(original_toc, self.aes_key)
 
             toc_data = bytearray(original_toc)
 
-            rpf.seek(existing_entry['offset'])
+            if file_size > current_capacity:
+                rpf.seek(0, os.SEEK_END)
+                end_offset = rpf.tell()
+                target_offset = self._align_up(end_offset)
+                if target_offset > 0x7FFFFFFF:
+                    raise RPFParsingError(
+                        f"Relocated offset 0x{target_offset:X} exceeds the RPF3 file offset range."
+                    )
+                if target_offset > end_offset:
+                    rpf.write(b'\x00' * (target_offset - end_offset))
+                print(
+                    f"Replacement exceeds the current slot; relocating from "
+                    f"0x{existing_entry['offset']:X} to aligned EOF 0x{target_offset:X}."
+                )
+
+            rpf.seek(target_offset)
             rpf.write(file_data)
 
             entry_index = toc_entry['index']
@@ -283,7 +322,7 @@ class RPFParser:
                 '<IIII',
                 toc_entry['name_hash'],
                 file_size,
-                existing_entry['offset'],
+                target_offset,
                 0,
             )
 
@@ -291,8 +330,7 @@ class RPFParser:
             entry_index * ENTRY_SIZE: (entry_index * ENTRY_SIZE) + ENTRY_SIZE
             ] = entry_data
 
-            if encrypted:
-                cipher = AES.new(self.aes_key, AES.MODE_ECB)
+            if self.encrypted:
                 encrypted_toc = bytes(toc_data)
                 for _ in range(16):
                     cipher = AES.new(self.aes_key, AES.MODE_ECB)
@@ -304,7 +342,9 @@ class RPFParser:
             rpf.write(encrypted_toc)
 
         existing_entry['size'] = file_size
+        existing_entry['offset'] = target_offset
         toc_entry['size'] = file_size
+        toc_entry['offset'] = target_offset
 
         print(f"Successfully replaced file: {rpf_path}")
         print(f"Hash preserved: 0x{toc_entry['name_hash']:X}")
