@@ -6,6 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from core.radio_logo.experimental import (
+    EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE,
+    ExperimentalWtdRebuildDisabledError,
+)
 from core.radio_logo.resource_builder import (
     FFTDC_ENVIRONMENT_VARIABLE,
     FftdcNotFoundError,
@@ -28,6 +32,21 @@ def _fake_builder(tmp_path: Path, body: str) -> tuple[str, ...]:
     script = tmp_path / "fake_fftdc.py"
     script.write_text(body, encoding="utf-8")
     return sys.executable, str(script)
+
+
+@pytest.fixture(autouse=True)
+def _enable_experimental_wtd_rebuild(monkeypatch):
+    monkeypatch.setenv(EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE, "1")
+
+
+def test_build_requires_explicit_experimental_opt_in(tmp_path, monkeypatch):
+    monkeypatch.delenv(EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE, raising=False)
+    source = _texture_dir(tmp_path)
+
+    with pytest.raises(ExperimentalWtdRebuildDisabledError, match="experimental"):
+        build_wtd(source, tmp_path / "output.wtd")
+
+    assert not (tmp_path / "output.wtd").exists()
 
 
 def test_resolve_explicit_executable(tmp_path):

@@ -15,6 +15,15 @@ from core.radio_logo.station_pack import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _production_preflight_ready(monkeypatch):
+    monkeypatch.setattr(
+        workflow,
+        "require_station_logo_workflow_ready",
+        lambda *args, **kwargs: object(),
+    )
+
+
 def _fake_package(
     output_directory: Path,
     *,
@@ -70,6 +79,26 @@ def _fake_package(
 
 def _install_result(source: Path, destination: Path) -> InstalledRadioLogo:
     return InstalledRadioLogo(str(source), str(destination), None)
+
+
+def test_preflight_failure_stops_before_package_build(tmp_path, monkeypatch):
+    def fail_preflight(*args, **kwargs):
+        raise RuntimeError("preflight blocked")
+
+    monkeypatch.setattr(workflow, "require_station_logo_workflow_ready", fail_preflight)
+    monkeypatch.setattr(
+        workflow,
+        "build_station_logo_pack",
+        lambda *args, **kwargs: pytest.fail("build must not run"),
+    )
+
+    with pytest.raises(RuntimeError, match="preflight blocked"):
+        workflow.install_station_logo_from_image(
+            tmp_path,
+            RadioLogoTarget.GTA_IV,
+            "vladivostok",
+            tmp_path / "logo.png",
+        )
 
 
 def test_update_install_builds_from_active_sources(tmp_path, monkeypatch):

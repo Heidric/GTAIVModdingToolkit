@@ -21,6 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.radio_logo.diagnostics import (
+    RadioLogoDiagnosticSeverity,
+    diagnose_station_logo_workflow,
+)
 from core.radio_logo.images import (
     LogoFitMode,
     format_logo_requirements,
@@ -185,6 +189,7 @@ class RadioLogoInstallPage(QWidget):
         self.source_image = ""
         self.image_info = None
         self.current_plan = None
+        self.readiness_report = None
         self.recovery_plan = []
         self.preview_ready = False
         self.preview_directory = QTemporaryDir(
@@ -297,6 +302,25 @@ class RadioLogoInstallPage(QWidget):
         )
         self.image_info_label.setWordWrap(True)
         layout.addWidget(self.image_info_label)
+
+        readiness_row = QHBoxLayout()
+        self.readiness_label = QLabel(
+            "Production preflight has not been run for this station.",
+            tab,
+        )
+        self.readiness_label.setWordWrap(True)
+        self.readiness_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        readiness_row.addWidget(self.readiness_label, 1)
+
+        self.check_readiness_button = QPushButton("Check Readiness", tab)
+        self.check_readiness_button.setStyleSheet(BUTTON_STYLE)
+        self.check_readiness_button.clicked.connect(
+            lambda: self._refresh_readiness(show_dialog=True)
+        )
+        readiness_row.addWidget(self.check_readiness_button)
+        layout.addLayout(readiness_row)
 
         fit_row = QHBoxLayout()
         fit_row.addWidget(QLabel("Image fit:", tab))
@@ -488,6 +512,8 @@ class RadioLogoInstallPage(QWidget):
             self.destination_label.setText("Destination: unavailable")
             self.station_combo.clear()
             self.current_plan = None
+            self.readiness_report = None
+            self._set_readiness_unavailable("No supported target is available.")
             self._clear_previews("No supported target is available.")
             self._refresh_recovery_state()
             self._update_controls()
@@ -533,11 +559,13 @@ class RadioLogoInstallPage(QWidget):
         target = self._selected_target()
         station = self._selected_station()
         self.current_plan = None
+        self.readiness_report = None
 
         if target is None or station is None:
             self.requirements_label.setText(
                 "Select a game target and station to inspect its texture requirements."
             )
+            self._set_readiness_unavailable("Select a station.")
             self._clear_previews("Select a station.")
             self._update_controls()
             return
@@ -551,6 +579,7 @@ class RadioLogoInstallPage(QWidget):
             )
         except Exception as exc:
             self.requirements_label.setText(f"Unable to inspect station textures: {exc}")
+            self._set_readiness_unavailable(f"Preflight unavailable: {exc}")
             self._clear_previews("Preview unavailable.")
             self._update_controls()
             return
@@ -567,6 +596,7 @@ class RadioLogoInstallPage(QWidget):
             f"{plan.noncolored_canvas.format_name}."
         )
         self._refresh_preview()
+        self._refresh_readiness(show_dialog=False)
         self._update_controls()
 
     def select_image(self):
@@ -609,7 +639,91 @@ class RadioLogoInstallPage(QWidget):
             "color: #FFB74D;" if not info.has_transparency else ""
         )
         self._refresh_preview()
+        self._refresh_readiness(show_dialog=False)
         self._update_controls()
+
+    def _set_readiness_unavailable(self, message):
+        self.readiness_report = None
+        self.readiness_label.setStyleSheet("color: #FFB74D;")
+        self.readiness_label.setText(message)
+
+    def _format_readiness_report(self, report):
+        lines = [
+            f"Production WTD mode: {report.production_mode}",
+            "Status: ready" if report.ready else "Status: blocked",
+        ]
+        for item in report.diagnostics:
+            prefix = {
+                RadioLogoDiagnosticSeverity.INFO: "OK",
+                RadioLogoDiagnosticSeverity.WARNING: "WARNING",
+                RadioLogoDiagnosticSeverity.ERROR: "ERROR",
+            }[item.severity]
+            lines.append(f"[{prefix}] {item.message}")
+        return "\n".join(lines)
+
+    def _refresh_readiness(self, *, show_dialog=False):
+        target = self._selected_target()
+        station = self._selected_station()
+        if target is None or station is None:
+            self._set_readiness_unavailable(
+                "Select a target and station to run production preflight."
+            )
+            self._update_controls()
+            return None
+
+        try:
+            report = diagnose_station_logo_workflow(
+                self.gtaiv_path,
+                target,
+                station,
+                direct_source=self.use_direct,
+                source_image=self.source_image or None,
+            )
+        except Exception as exc:
+            self._set_readiness_unavailable(f"Preflight failed unexpectedly: {exc}")
+            if show_dialog:
+                QMessageBox.critical(
+                    self,
+                    "Radio Logo Preflight Error",
+                    str(exc),
+                    QMessageBox.StandardButton.Ok,
+                )
+            self._update_controls()
+            return None
+
+        self.readiness_report = report
+        if report.ready:
+            warnings = len(report.warnings)
+            suffix = f"; {warnings} warning(s)" if warnings else ""
+            self.readiness_label.setStyleSheet(
+                "color: #FFB74D;" if warnings else "color: #A5D6A7;"
+            )
+            self.readiness_label.setText(
+                "Production preflight passed using surgical payload patching"
+                + suffix
+                + "."
+            )
+        else:
+            self.readiness_label.setStyleSheet("color: #EF9A9A;")
+            self.readiness_label.setText(
+                f"Production preflight is blocked by {len(report.errors)} error(s)."
+            )
+
+        if show_dialog:
+            message = self._format_readiness_report(report)
+            if report.ready and not report.warnings:
+                QMessageBox.information(self, "Radio Logo Preflight", message)
+            elif report.ready:
+                QMessageBox.warning(self, "Radio Logo Preflight", message)
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Radio Logo Preflight",
+                    message,
+                    QMessageBox.StandardButton.Ok,
+                )
+        self._update_controls()
+        return report
 
     def _refresh_preview(self, *_):
         if (
@@ -682,6 +796,18 @@ class RadioLogoInstallPage(QWidget):
         ):
             return
 
+        report = self._refresh_readiness(show_dialog=False)
+        if report is None or not report.ready:
+            QMessageBox.critical(
+                self,
+                "Radio Logo Preflight Failed",
+                self._format_readiness_report(report)
+                if report is not None
+                else self.readiness_label.text(),
+                QMessageBox.StandardButton.Ok,
+            )
+            return
+
         if self.image_info is not None and not self.image_info.has_transparency:
             answer = QMessageBox.question(
                 self,
@@ -740,6 +866,7 @@ class RadioLogoInstallPage(QWidget):
                 lines.append(f"Backup: {item.backup_path}")
 
         self._refresh_recovery_state()
+        self._refresh_readiness(show_dialog=False)
         QMessageBox.information(
             self,
             "Radio Logo Installed",
@@ -1028,6 +1155,9 @@ class RadioLogoInstallPage(QWidget):
         self.select_image_button.setEnabled(not busy and station_available)
         self.fit_combo.setEnabled(not busy and station_available)
         self.padding_spin.setEnabled(not busy and station_available)
+        self.check_readiness_button.setEnabled(
+            not busy and target_available and station_available
+        )
         self.install_image_button.setEnabled(
             not busy
             and target_available
@@ -1035,6 +1165,8 @@ class RadioLogoInstallPage(QWidget):
             and bool(self.source_image)
             and self.current_plan is not None
             and self.preview_ready
+            and self.readiness_report is not None
+            and self.readiness_report.ready
         )
 
         self.files_list.setEnabled(not busy)

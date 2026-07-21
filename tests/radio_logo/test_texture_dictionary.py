@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 import core.radio_logo.texture_dictionary as texture_dictionary
+from core.radio_logo.experimental import (
+    EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE,
+    ExperimentalWtdRebuildDisabledError,
+)
 from core.radio_logo.texture_dictionary import (
     TexfuryUnavailableError,
     TextureDictionaryError,
@@ -201,6 +205,21 @@ def make_backend(
         SimpleNamespace(Game=FakeGame, ITD=FakeITD, Texture=FakeTextureFactory),
         captures,
     )
+
+
+@pytest.fixture(autouse=True)
+def _enable_experimental_wtd_rebuild(monkeypatch):
+    monkeypatch.setenv(EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE, "1")
+
+
+def test_round_trip_requires_explicit_experimental_opt_in(tmp_path, monkeypatch):
+    monkeypatch.delenv(EXPERIMENTAL_WTD_ENVIRONMENT_VARIABLE, raising=False)
+    source = build_wtd(tmp_path / "source.wtd", [{"name": "radio_alpha"}])
+
+    with pytest.raises(ExperimentalWtdRebuildDisabledError, match="experimental"):
+        round_trip_wtd(source, tmp_path / "output.wtd")
+
+    assert not (tmp_path / "output.wtd").exists()
 
 
 def test_archive_signatures_rejects_case_only_duplicates(tmp_path):

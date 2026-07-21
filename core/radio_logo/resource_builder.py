@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from .experimental import require_experimental_wtd_rebuild
+
 
 FFTDC_ENVIRONMENT_VARIABLE = "GTAIV_FFTDC_PATH"
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -183,8 +185,10 @@ def build_wtd(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     environment: dict[str, str] | None = None,
     project_root: str | os.PathLike[str] | None = None,
+    allow_experimental: bool = False,
 ) -> WtdBuildResult:
-    """Build a GTA IV WTD file through FusionFix ResourceBuilder transactionally."""
+    """Build a full WTD through the explicitly enabled experimental path."""
+    require_experimental_wtd_rebuild(allow_experimental)
     source, _ = validate_wtd_source_directory(source_directory)
     output = Path(output_path).expanduser().resolve()
 
@@ -269,11 +273,17 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--dry-run", action="store_true", help="Validate and print the command without running it")
+    parser.add_argument(
+        "--experimental",
+        action="store_true",
+        help="acknowledge that full WTD reconstruction is unsafe for production",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _argument_parser().parse_args(argv)
+    require_experimental_wtd_rebuild(args.experimental)
     source, files = validate_wtd_source_directory(args.source_directory)
     command_prefix = resolve_fftdc_command(args.fftdc)
     output = Path(args.output_path).expanduser().resolve()
@@ -290,6 +300,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fftdc_command=command_prefix,
         overwrite=args.overwrite,
         timeout_seconds=args.timeout,
+        allow_experimental=args.experimental,
     )
     print(f"Built: {result.output_path}")
     print(f"Size: {result.file_size} bytes")

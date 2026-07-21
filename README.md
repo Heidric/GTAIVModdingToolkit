@@ -29,6 +29,7 @@ Implemented features:
 - Preview selected and unselected logo variants before installation.
 - Install radio-logo WTD changes transactionally in FusionFix or direct mode.
 - Restore the previous complete radio-logo state from the application.
+- Run a production preflight for dependencies, WTD sources, image input, and write access.
 
 ### Input formats
 
@@ -178,6 +179,19 @@ The batch page displays the number of replaceable slots, selected files, and rem
 The image workflow changes existing `_col` and `_bw` payloads while preserving the original WTD resource layout. Generated package directories are temporary unless explicitly requested through the backend API.
 
 Recovery operates on one complete backup batch. In direct mode it restores the newest timestamped WTD backups. In FusionFix mode it restores the newest override backups, or removes the first override batch so the game falls back to its original WTD files. The displaced active state is backed up, allowing the recovery operation itself to be reversed.
+
+### WTD write safety
+
+The production image workflow uses **surgical payload patching**. It preserves the original RSC5 header, virtual metadata, texture table, dimensions, formats, mip counts, and every physical byte outside the selected texture payloads. The **Check Readiness** action verifies Pillow, the texfury encoder, station source WTDs, the input image, temporary storage, and destination write access before installation.
+
+Full WTD reconstruction through texfury dictionary saving or FusionFix ResourceBuilder remains available only for development diagnostics. These paths are not used by the GUI installation workflow and require explicit acknowledgement:
+
+```bash
+python -m core.radio_logo.texture_dictionary --help
+python -m core.radio_logo.resource_builder --help
+```
+
+Pass `--experimental` to the selected command, pass `allow_experimental=True` through the Python API, or set `GTAIV_TOOLKIT_ENABLE_EXPERIMENTAL_WTD_REBUILD=1`. Experimental output must not be treated as production-safe merely because structural validation succeeds.
 
 ## Reverting changes
 

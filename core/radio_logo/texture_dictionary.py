@@ -1,4 +1,7 @@
-"""Safe GTA IV WTD round-tripping and named texture replacement via texfury."""
+"""Experimental full GTA IV WTD reconstruction through texfury.
+
+The production radio-logo workflow uses :mod:`payload_patcher` instead.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
+from .experimental import require_experimental_wtd_rebuild
 from .wtd import WTDArchive, read_wtd
 
 
@@ -293,9 +297,11 @@ def round_trip_wtd(
     output: str | os.PathLike[str],
     *,
     overwrite: bool = False,
+    allow_experimental: bool = False,
 ) -> TextureDictionaryResult:
-    """Load and re-save a GTA IV WTD, requiring byte-identical texture payloads."""
+    """Load and re-save a WTD through the experimental full rebuild path."""
 
+    require_experimental_wtd_rebuild(allow_experimental)
     source_path, output_path = _normalise_wtd_paths(
         source,
         output,
@@ -327,9 +333,11 @@ def replace_texture_from_image(
     *,
     quality: float = 0.9,
     overwrite: bool = False,
+    allow_experimental: bool = False,
 ) -> TextureDictionaryResult:
-    """Replace one named GTA IV texture while preserving its format and metadata."""
+    """Replace one texture through the experimental full rebuild path."""
 
+    require_experimental_wtd_rebuild(allow_experimental)
     if not texture_name or not texture_name.strip():
         raise ValueError("texture_name must not be empty")
     if not 0.0 <= quality <= 1.0:
@@ -427,6 +435,11 @@ def _build_parser() -> argparse.ArgumentParser:
     roundtrip.add_argument("source")
     roundtrip.add_argument("output")
     roundtrip.add_argument("--overwrite", action="store_true")
+    roundtrip.add_argument(
+        "--experimental",
+        action="store_true",
+        help="acknowledge that full WTD reconstruction is unsafe for production",
+    )
 
     replace = subparsers.add_parser("replace", help="replace one named texture")
     replace.add_argument("source")
@@ -435,6 +448,11 @@ def _build_parser() -> argparse.ArgumentParser:
     replace.add_argument("image")
     replace.add_argument("--quality", type=float, default=0.9)
     replace.add_argument("--overwrite", action="store_true")
+    replace.add_argument(
+        "--experimental",
+        action="store_true",
+        help="acknowledge that full WTD reconstruction is unsafe for production",
+    )
 
     return parser
 
@@ -446,6 +464,7 @@ def main(argv: list[str] | None = None) -> int:
             args.source,
             args.output,
             overwrite=args.overwrite,
+            allow_experimental=args.experimental,
         )
     else:
         result = replace_texture_from_image(
@@ -455,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             args.image,
             quality=args.quality,
             overwrite=args.overwrite,
+            allow_experimental=args.experimental,
         )
     _print_result(result)
     return 0

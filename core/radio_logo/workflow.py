@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from .diagnostics import require_station_logo_workflow_ready
 from .images import LogoFitMode
 from .installer import (
     InstalledRadioLogo,
@@ -92,6 +93,14 @@ def install_station_logo_from_image(
     directory. An explicit *package_directory* preserves generated WTD files and
     previews; otherwise the intermediate package is removed after installation.
     """
+
+    require_station_logo_workflow_ready(
+        gtaiv_path,
+        target,
+        station_base,
+        direct_source=use_direct,
+        source_image=source_image,
+    )
 
     with _package_workspace(package_directory) as (workspace, preserve_package):
         package = build_station_logo_pack(
