@@ -8,6 +8,8 @@ class PathHistoryKey:
     GTA_IV_INSTALLATION = "gta_iv_installation"
     REPLACEMENT_AUDIO = "replacement_audio"
     BATCH_REPLACEMENT_AUDIO = "batch_replacement_audio"
+    RADIO_LOGO_PACK = "radio_logo_pack"
+    RADIO_LOGO_IMAGE = "radio_logo_image"
 
 
 _SETTINGS_ORGANIZATION = "Heidric"

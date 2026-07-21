@@ -7,6 +7,7 @@ from ui.pages.song_select import SongSelectPage
 from ui.pages.replace import ReplacePage
 from ui.pages.progress import ProgressPage
 from ui.pages.batch_replace import BatchReplacePage
+from ui.pages.radio_logo_install import RadioLogoInstallPage
 from audio_utils import replace_special_audio, update_song_duration
 from utils import install_ffmpeg, check_ffmpeg
 from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
@@ -105,6 +106,7 @@ class GTAIVEditor(QMainWindow):
         self.intro_page = IntroPage(on_next=self.goto_radio_select)
         self.replace_page = None
         self.batch_replace_page = None
+        self.radio_logo_install_page = None
         self.progress_page = ProgressPage(on_cancel=self.cancel_replace)
 
         self.setWindowTitle("GTA IV Modding Toolkit")
@@ -150,7 +152,8 @@ class GTAIVEditor(QMainWindow):
         self.radio_select_page = RadioSelectPage(
             gtaiv_path=self.gtaiv_path,
             on_next=self.goto_song_select,
-            on_back=self.goto_intro
+            on_back=self.goto_intro,
+            on_install_logos=self.goto_radio_logo_install,
         )
         self.stack.addWidget(self.radio_select_page)
         self.stack.setCurrentWidget(self.radio_select_page)
@@ -172,6 +175,19 @@ class GTAIVEditor(QMainWindow):
         self.stack.setCurrentWidget(self.song_select_page)
 
     def goto_radio_select_back(self):
+        self.stack.setCurrentWidget(self.radio_select_page)
+
+    def goto_radio_logo_install(self):
+        self._discard_page(self.radio_logo_install_page)
+        self.radio_logo_install_page = RadioLogoInstallPage(
+            gtaiv_path=self.gtaiv_path,
+            use_direct=self.use_direct,
+            on_back=self.goto_radio_logo_install_back,
+        )
+        self.stack.addWidget(self.radio_logo_install_page)
+        self.stack.setCurrentWidget(self.radio_logo_install_page)
+
+    def goto_radio_logo_install_back(self):
         self.stack.setCurrentWidget(self.radio_select_page)
 
     def goto_batch_replace(self, songs):

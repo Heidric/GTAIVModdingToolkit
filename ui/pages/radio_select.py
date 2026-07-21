@@ -9,11 +9,12 @@ from utils import resource_path
 
 
 class RadioSelectPage(QWidget):
-    def __init__(self, gtaiv_path, on_next, on_back):
+    def __init__(self, gtaiv_path, on_next, on_back, on_install_logos):
         super().__init__()
         self.gtaiv_path = gtaiv_path
         self.on_next = on_next
         self.on_back = on_back
+        self.on_install_logos = on_install_logos
 
         self.selected_radio = ""
 
@@ -42,6 +43,11 @@ class RadioSelectPage(QWidget):
         self.back_button.clicked.connect(self.on_back)
         self.back_button.setStyleSheet(BUTTON_STYLE)
         buttons_layout.addWidget(self.back_button)
+
+        self.logo_pack_button = QPushButton("Radio Logo Tools", self)
+        self.logo_pack_button.clicked.connect(self.on_install_logos)
+        self.logo_pack_button.setStyleSheet(BUTTON_STYLE)
+        buttons_layout.addWidget(self.logo_pack_button)
 
         self.next_button = QPushButton("Next", self)
         self.next_button.clicked.connect(self.proceed)

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import radio_logo_installer as installer
-from radio_logo_installer import (
+import core.radio_logo.installer as installer
+from core.radio_logo.installer import (
     KNOWN_RADIO_LOGO_WTD_NAMES,
     RadioLogoInstallError,
     RadioLogoTarget,
