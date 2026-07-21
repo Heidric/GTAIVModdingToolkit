@@ -36,7 +36,12 @@ _TARGET_RELATIVE_DIRECTORIES = {
 
 
 class RadioLogoInstallError(RuntimeError):
-    """Raised when a radio-logo pack cannot be installed safely."""
+    """Raised when a radio-logo pack cannot be installed or recovered safely."""
+
+
+class RadioLogoRecoveryAction(str, Enum):
+    RESTORED_BACKUP = "restored_backup"
+    REMOVED_OVERRIDE = "removed_override"
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,21 @@ class InstalledRadioLogo:
     source_path: str
     destination_path: str
     backup_path: str | None
+
+
+@dataclass(frozen=True)
+class RadioLogoRecoveryPlanItem:
+    destination_path: str
+    action: RadioLogoRecoveryAction
+    source_backup_path: str | None
+
+
+@dataclass(frozen=True)
+class RecoveredRadioLogo:
+    destination_path: str
+    action: RadioLogoRecoveryAction
+    restored_from_path: str | None
+    displaced_backup_path: str | None
 
 
 def _coerce_target(target: RadioLogoTarget | str) -> RadioLogoTarget:
@@ -86,9 +106,55 @@ def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
-def _timestamped_backup_path(destination: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+def _new_backup_batch_id() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+
+
+def _timestamped_backup_path(destination: Path, batch_id: str | None = None) -> Path:
+    timestamp = batch_id or _new_backup_batch_id()
     return destination.with_name(f"{destination.name}.backup-{timestamp}")
+
+
+def _backup_batch_id(destination: Path, backup_path: Path) -> str:
+    prefix = f"{destination.name}.backup-"
+    return backup_path.name[len(prefix) :] if backup_path.name.startswith(prefix) else ""
+
+
+def _latest_backup_group(destination_dir: Path) -> list[tuple[Path, Path]]:
+    candidates: list[tuple[Path, Path, str]] = []
+    for filename in sorted(KNOWN_RADIO_LOGO_WTD_NAMES):
+        destination = destination_dir / filename
+        backups = sorted(
+            path
+            for path in destination_dir.glob(f"{filename}.backup-*")
+            if path.is_file()
+        )
+        if not backups:
+            continue
+        latest = backups[-1]
+        candidates.append((destination, latest, _backup_batch_id(destination, latest)))
+
+    if not candidates:
+        return []
+
+    newest_batch = max(batch_id for _, _, batch_id in candidates)
+    selected = [
+        (destination, backup)
+        for destination, backup, batch_id in candidates
+        if batch_id == newest_batch
+    ]
+    if len(selected) > 1:
+        return selected
+
+    # Backups created before batch identifiers were shared used a distinct
+    # microsecond suffix per file. Group those legacy backups by whole second.
+    newest_second = newest_batch.rsplit("-", 1)[0]
+    legacy_group = [
+        (destination, backup)
+        for destination, backup, batch_id in candidates
+        if batch_id.rsplit("-", 1)[0] == newest_second
+    ]
+    return legacy_group or selected
 
 
 def _temporary_copy(source: Path, directory: Path, *, prefix: str, suffix: str) -> Path:
@@ -173,6 +239,7 @@ def install_radio_logo_pack(
     expected_hashes: dict[Path, str] = {}
     source_by_destination: dict[Path, Path] = {}
     backups: dict[Path, Path | None] = {}
+    backup_batch_id = _new_backup_batch_id()
 
     try:
         for source in sources:
@@ -221,7 +288,7 @@ def install_radio_logo_pack(
                 if rollback_path is None:
                     backups[destination] = None
                     continue
-                backup_path = _timestamped_backup_path(destination)
+                backup_path = _timestamped_backup_path(destination, backup_batch_id)
                 shutil.copy2(rollback_path, backup_path)
                 backups[destination] = backup_path
         except Exception as exc:
@@ -252,6 +319,210 @@ def install_radio_logo_pack(
                 backup_path=str(backups[destination]) if backups[destination] else None,
             )
             for destination in staged
+        ]
+    finally:
+        for path in staged.values():
+            if path is not None:
+                path.unlink(missing_ok=True)
+        for path in rollback.values():
+            if path is not None:
+                path.unlink(missing_ok=True)
+
+
+def plan_radio_logo_recovery(
+    gtaiv_path: str | os.PathLike[str],
+    target: RadioLogoTarget | str,
+    *,
+    use_direct: bool,
+) -> list[RadioLogoRecoveryPlanItem]:
+    """Describe the next recovery operation without changing any files."""
+
+    game_root = Path(gtaiv_path).expanduser().resolve()
+    if not game_root.is_dir():
+        raise FileNotFoundError(f"GTA IV directory not found: {game_root}")
+
+    original_directory = _original_target_dir(game_root, target)
+    if not original_directory.is_dir():
+        raise FileNotFoundError(
+            f"The selected GTA IV target is not installed: {original_directory}"
+        )
+
+    destination_dir = get_radio_logo_destination_dir(
+        game_root,
+        target,
+        use_direct=use_direct,
+    )
+    backup_group = (
+        _latest_backup_group(destination_dir)
+        if destination_dir.is_dir()
+        else []
+    )
+
+    if backup_group:
+        return [
+            RadioLogoRecoveryPlanItem(
+                destination_path=str(destination),
+                action=RadioLogoRecoveryAction.RESTORED_BACKUP,
+                source_backup_path=str(backup),
+            )
+            for destination, backup in backup_group
+        ]
+
+    if not use_direct and destination_dir.is_dir():
+        return [
+            RadioLogoRecoveryPlanItem(
+                destination_path=str(destination),
+                action=RadioLogoRecoveryAction.REMOVED_OVERRIDE,
+                source_backup_path=None,
+            )
+            for destination in (
+                destination_dir / filename
+                for filename in sorted(KNOWN_RADIO_LOGO_WTD_NAMES)
+            )
+            if destination.is_file()
+        ]
+
+    return []
+
+
+def restore_previous_radio_logo_pack(
+    gtaiv_path: str | os.PathLike[str],
+    target: RadioLogoTarget | str,
+    *,
+    use_direct: bool,
+) -> list[RecoveredRadioLogo]:
+    """Restore the most recent radio-logo WTD state transactionally.
+
+    A direct installation restores the newest batch of timestamped backups.
+    FusionFix mode does the same when backups exist. If no backups exist, the
+    current override WTD files are removed so the game falls back to originals.
+    The displaced active files are preserved as a new backup batch, allowing a
+    later recovery call to reverse the operation.
+    """
+
+    game_root = Path(gtaiv_path).expanduser().resolve()
+    recovery_plan = plan_radio_logo_recovery(
+        game_root,
+        target,
+        use_direct=use_direct,
+    )
+    destination_dir = get_radio_logo_destination_dir(
+        game_root,
+        target,
+        use_direct=use_direct,
+    )
+    plans = [
+        (
+            Path(item.destination_path),
+            Path(item.source_backup_path) if item.source_backup_path else None,
+            item.action,
+        )
+        for item in recovery_plan
+    ]
+
+    if not plans:
+        raise RadioLogoInstallError(
+            f"No previous radio-logo installation state was found in {destination_dir}"
+        )
+
+    staged: dict[Path, Path | None] = {}
+    rollback: dict[Path, Path | None] = {}
+    expected_hashes: dict[Path, str] = {}
+    displaced_backups: dict[Path, Path | None] = {}
+    displaced_batch_id = _new_backup_batch_id()
+
+    try:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        for destination, source_backup, action in plans:
+            rollback[destination] = (
+                _temporary_copy(
+                    destination,
+                    destination_dir,
+                    prefix=".gtaiv_toolkit_logo_recovery_rollback_",
+                    suffix=".wtd",
+                )
+                if destination.is_file()
+                else None
+            )
+
+            if action is RadioLogoRecoveryAction.RESTORED_BACKUP:
+                if source_backup is None or not source_backup.is_file():
+                    raise RadioLogoInstallError(
+                        f"Radio-logo backup is missing: {source_backup}"
+                    )
+                staged_path = _temporary_copy(
+                    source_backup,
+                    destination_dir,
+                    prefix=".gtaiv_toolkit_logo_recovery_stage_",
+                    suffix=".wtd",
+                )
+                staged[destination] = staged_path
+                expected_hashes[destination] = _sha256(source_backup)
+            else:
+                staged[destination] = None
+
+        try:
+            for destination, _, action in plans:
+                if action is RadioLogoRecoveryAction.RESTORED_BACKUP:
+                    staged_path = staged[destination]
+                    if staged_path is None:
+                        raise RadioLogoInstallError(
+                            f"Missing staged recovery WTD: {destination.name}"
+                        )
+                    _atomic_replace(staged_path, destination)
+                    staged[destination] = None
+                else:
+                    destination.unlink()
+
+            for destination, expected_hash in expected_hashes.items():
+                if not destination.is_file() or _sha256(destination) != expected_hash:
+                    raise RadioLogoInstallError(
+                        f"Recovered WTD verification failed: {destination.name}"
+                    )
+
+            for destination, rollback_path in rollback.items():
+                if rollback_path is None:
+                    displaced_backups[destination] = None
+                    continue
+                backup_path = _timestamped_backup_path(
+                    destination,
+                    displaced_batch_id,
+                )
+                shutil.copy2(rollback_path, backup_path)
+                displaced_backups[destination] = backup_path
+        except Exception as exc:
+            for backup_path in displaced_backups.values():
+                if backup_path is not None:
+                    backup_path.unlink(missing_ok=True)
+
+            rollback_errors = []
+            for destination, rollback_path in reversed(list(rollback.items())):
+                try:
+                    if rollback_path is None:
+                        destination.unlink(missing_ok=True)
+                    elif rollback_path.exists():
+                        _atomic_replace(rollback_path, destination)
+                        rollback[destination] = None
+                except Exception as rollback_exc:  # pragma: no cover - catastrophic filesystem failure
+                    rollback_errors.append(f"{destination}: {rollback_exc}")
+
+            detail = f"Radio-logo recovery failed and was rolled back: {exc}"
+            if rollback_errors:
+                detail += "\nRollback errors: " + "; ".join(rollback_errors)
+            raise RadioLogoInstallError(detail) from exc
+
+        return [
+            RecoveredRadioLogo(
+                destination_path=str(destination),
+                action=action,
+                restored_from_path=str(source_backup) if source_backup else None,
+                displaced_backup_path=(
+                    str(displaced_backups[destination])
+                    if displaced_backups[destination]
+                    else None
+                ),
+            )
+            for destination, source_backup, action in plans
         ]
     finally:
         for path in staged.values():

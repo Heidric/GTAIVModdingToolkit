@@ -11,7 +11,7 @@ A Windows desktop toolkit for modifying Grand Theft Auto IV assets.
 
 ## Current scope
 
-The toolkit currently modifies existing radio-track slots in the GTA IV base game. It does not create new stations or new track slots.
+The toolkit modifies existing radio-track slots and existing radio-station logo textures. It does not create new stations or new track slots.
 
 Implemented features:
 
@@ -25,6 +25,10 @@ Implemented features:
 - Update track durations in `sounds.dat15`.
 - Preserve non-standard OAF timestamp and channel layouts when they cannot be safely rewritten.
 - Remember the last directory used by game, audio, and other file pickers.
+- Replace an existing station logo from PNG, WebP, JPEG, BMP, or TGA input.
+- Preview selected and unselected logo variants before installation.
+- Install radio-logo WTD changes transactionally in FusionFix or direct mode.
+- Restore the previous complete radio-logo state from the application.
 
 ### Input formats
 
@@ -161,11 +165,33 @@ Run the application:
 
 The batch page displays the number of replaceable slots, selected files, and remaining slots before processing starts.
 
+### Radio-logo replacement and recovery
+
+1. Open **Radio Logo Tools** from the station-selection page.
+2. Select GTA IV, TLAD, or TBoGT as the texture target.
+3. Select an existing station and an input image. Transparent PNG or WebP input is recommended.
+4. Choose **Fit**, **Fill**, or **Stretch**, and adjust safe padding.
+5. Review the selected/color and unselected/grayscale previews.
+6. Select **Install Station Logo** and confirm the transactional installation.
+7. To undo the latest logo operation, open the **Recovery** tab and select **Restore Previous Logo State**.
+
+The image workflow changes existing `_col` and `_bw` payloads while preserving the original WTD resource layout. Generated package directories are temporary unless explicitly requested through the backend API.
+
+Recovery operates on one complete backup batch. In direct mode it restores the newest timestamped WTD backups. In FusionFix mode it restores the newest override backups, or removes the first override batch so the game falls back to its original WTD files. The displaced active state is backed up, allowing the recovery operation itself to be reversed.
+
 ## Reverting changes
 
 ### FusionFix mode
 
-To remove a station override, delete its RPF from:
+Radio-logo changes can be reverted from **Radio Logo Tools → Recovery**. Manual removal is also possible by deleting the relevant `radio_hud*.wtd` files under the matching texture directory:
+
+```text
+<gtaiv>/update/pc/textures/
+<gtaiv>/update/TLAD/pc/textures/
+<gtaiv>/update/TBoGT/pc/textures/
+```
+
+To remove a station audio override, delete its RPF from:
 
 ```text
 <gtaiv>/update/pc/audio/sfx/
@@ -181,7 +207,7 @@ Deleting the overridden `sounds.dat15` reverts duration metadata for every stati
 
 ### Direct replacement mode
 
-Restore the timestamped backups created next to the modified files. If no usable backup remains, restore the original game files through the game platform's file-verification mechanism.
+Use **Radio Logo Tools → Recovery** to restore the latest complete radio-logo backup batch. Audio and logo backups are also stored next to the modified files with timestamped names. If no usable backup remains, restore the original game files through the game platform's file-verification mechanism.
 
 ## Development and tests
 
@@ -200,7 +226,7 @@ Run the regression suite:
 Compile-check the tested Python modules:
 
 ```bash
-.venv/Scripts/python.exe -m compileall -q core vendor tests
+.venv/Scripts/python.exe -m compileall -q core ui vendor tests
 ```
 
 GitHub Actions runs the compile check and test suite on Windows with Python 3.12 for pushes and pull requests.

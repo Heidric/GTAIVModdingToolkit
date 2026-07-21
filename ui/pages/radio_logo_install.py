@@ -28,9 +28,12 @@ from core.radio_logo.images import (
 )
 from core.radio_logo.installer import (
     KNOWN_RADIO_LOGO_WTD_NAMES,
+    RadioLogoRecoveryAction,
     RadioLogoTarget,
     get_radio_logo_destination_dir,
     install_radio_logo_pack,
+    plan_radio_logo_recovery,
+    restore_previous_radio_logo_pack,
 )
 from core.radio_logo.station_pack import (
     create_station_logo_plan,
@@ -148,6 +151,30 @@ class PreparedPackInstallWorker(QThread):
         self.completed.emit(result)
 
 
+class RadioLogoRecoveryWorker(QThread):
+    completed = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, gtaiv_path, target, use_direct):
+        super().__init__()
+        self.gtaiv_path = gtaiv_path
+        self.target = target
+        self.use_direct = use_direct
+
+    def run(self):
+        try:
+            result = restore_previous_radio_logo_pack(
+                self.gtaiv_path,
+                self.target,
+                use_direct=self.use_direct,
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+            return
+
+        self.completed.emit(result)
+
+
 class RadioLogoInstallPage(QWidget):
     def __init__(self, gtaiv_path, use_direct, on_back):
         super().__init__()
@@ -158,6 +185,7 @@ class RadioLogoInstallPage(QWidget):
         self.source_image = ""
         self.image_info = None
         self.current_plan = None
+        self.recovery_plan = []
         self.preview_ready = False
         self.preview_directory = QTemporaryDir(
             "gtaiv-toolkit-radio-logo-preview-XXXXXX"
@@ -207,6 +235,7 @@ class RadioLogoInstallPage(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self._build_image_tab(), "From Image")
         self.tabs.addTab(self._build_pack_tab(), "Prepared WTD Pack")
+        self.tabs.addTab(self._build_recovery_tab(), "Recovery")
         layout.addWidget(self.tabs, 1)
 
         self.progress = QProgressBar(self)
@@ -364,6 +393,50 @@ class RadioLogoInstallPage(QWidget):
 
         return tab
 
+    def _build_recovery_tab(self):
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+
+        description = QLabel(
+            "Restore the previous complete radio-logo state for the selected "
+            "game target. Recovery is transactional and preserves the state "
+            "being displaced, so the operation can be reversed again.",
+            tab,
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self.recovery_status_label = QLabel(
+            "Select a game target to inspect available recovery data.",
+            tab,
+        )
+        self.recovery_status_label.setWordWrap(True)
+        self.recovery_status_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(self.recovery_status_label)
+
+        buttons = QHBoxLayout()
+        self.refresh_recovery_button = QPushButton(
+            "Refresh Recovery State",
+            tab,
+        )
+        self.refresh_recovery_button.setStyleSheet(BUTTON_STYLE)
+        self.refresh_recovery_button.clicked.connect(self._refresh_recovery_state)
+        buttons.addWidget(self.refresh_recovery_button)
+
+        self.restore_previous_button = QPushButton(
+            "Restore Previous Logo State",
+            tab,
+        )
+        self.restore_previous_button.setStyleSheet(BUTTON_STYLE)
+        self.restore_previous_button.clicked.connect(self.restore_previous_state)
+        buttons.addWidget(self.restore_previous_button)
+        layout.addLayout(buttons)
+
+        layout.addStretch(1)
+        return tab
+
     def _create_preview_label(self, parent):
         label = QLabel("Preview unavailable", parent)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -416,6 +489,7 @@ class RadioLogoInstallPage(QWidget):
             self.station_combo.clear()
             self.current_plan = None
             self._clear_previews("No supported target is available.")
+            self._refresh_recovery_state()
             self._update_controls()
             return
 
@@ -426,6 +500,7 @@ class RadioLogoInstallPage(QWidget):
         )
         self.destination_label.setText(f"Destination: {destination}")
         self._populate_stations(target)
+        self._refresh_recovery_state()
         self._update_controls()
 
     def _populate_stations(self, target):
@@ -664,9 +739,127 @@ class RadioLogoInstallPage(QWidget):
             if item.backup_path:
                 lines.append(f"Backup: {item.backup_path}")
 
+        self._refresh_recovery_state()
         QMessageBox.information(
             self,
             "Radio Logo Installed",
+            "\n\n".join(lines),
+        )
+
+    def _refresh_recovery_state(self, *_):
+        target = self._selected_target()
+        self.recovery_plan = []
+
+        if target is None:
+            self.recovery_status_label.setStyleSheet("color: #FFB74D;")
+            self.recovery_status_label.setText(
+                "Select a game target to inspect available recovery data."
+            )
+            self._update_controls()
+            return
+
+        try:
+            self.recovery_plan = plan_radio_logo_recovery(
+                self.gtaiv_path,
+                target,
+                use_direct=self.use_direct,
+            )
+        except Exception as exc:
+            self.recovery_status_label.setStyleSheet("color: #EF9A9A;")
+            self.recovery_status_label.setText(
+                f"Unable to inspect recovery data: {exc}"
+            )
+            self._update_controls()
+            return
+
+        if not self.recovery_plan:
+            destination = get_radio_logo_destination_dir(
+                self.gtaiv_path,
+                target,
+                use_direct=self.use_direct,
+            )
+            self.recovery_status_label.setStyleSheet("color: #B0BEC5;")
+            self.recovery_status_label.setText(
+                "No previous radio-logo state is currently available.\n"
+                f"Checked: {destination}"
+            )
+            self._update_controls()
+            return
+
+        lines = ["The next recovery operation will:"]
+        for item in self.recovery_plan:
+            destination = Path(item.destination_path)
+            if item.action is RadioLogoRecoveryAction.RESTORED_BACKUP:
+                lines.append(
+                    f"- Restore {destination.name} from "
+                    f"{item.source_backup_path}"
+                )
+            else:
+                lines.append(
+                    f"- Remove override {destination.name} so the game falls "
+                    "back to the original WTD"
+                )
+
+        self.recovery_status_label.setStyleSheet("")
+        self.recovery_status_label.setText("\n".join(lines))
+        self._update_controls()
+
+    def restore_previous_state(self):
+        target = self._selected_target()
+        if target is None or not self.recovery_plan:
+            return
+
+        operations = []
+        for item in self.recovery_plan:
+            destination = Path(item.destination_path)
+            if item.action is RadioLogoRecoveryAction.RESTORED_BACKUP:
+                operations.append(
+                    f"Restore {destination.name} from:\n"
+                    f"{item.source_backup_path}"
+                )
+            else:
+                operations.append(
+                    f"Remove override: {item.destination_path}"
+                )
+
+        answer = QMessageBox.question(
+            self,
+            "Confirm Radio Logo Recovery",
+            f"Target: {self.target_combo.currentText()}\n"
+            f"Mode: {'Direct replacement' if self.use_direct else 'FusionFix'}\n\n"
+            + "\n\n".join(operations)
+            + "\n\nThe active state being displaced will be backed up. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        worker = RadioLogoRecoveryWorker(
+            self.gtaiv_path,
+            target,
+            self.use_direct,
+        )
+        self._start_worker(worker, self._on_recovery_completed)
+
+    def _on_recovery_completed(self, recovered):
+        lines = []
+        for item in recovered:
+            if item.action is RadioLogoRecoveryAction.RESTORED_BACKUP:
+                lines.append(f"Restored: {item.destination_path}")
+                lines.append(f"From: {item.restored_from_path}")
+            else:
+                lines.append(f"Removed override: {item.destination_path}")
+
+            if item.displaced_backup_path:
+                lines.append(
+                    f"Displaced state backup: {item.displaced_backup_path}"
+                )
+
+        self._refresh_recovery_state()
+        QMessageBox.information(
+            self,
+            "Radio Logo State Restored",
             "\n\n".join(lines),
         )
 
@@ -778,6 +971,7 @@ class RadioLogoInstallPage(QWidget):
             if item.backup_path:
                 lines.append(f"Backup: {item.backup_path}")
 
+        self._refresh_recovery_state()
         QMessageBox.information(
             self,
             "Prepared Radio Logo Pack Installed",
@@ -801,7 +995,7 @@ class RadioLogoInstallPage(QWidget):
     def _on_install_error(self, message):
         QMessageBox.critical(
             self,
-            "Radio Logo Installation Error",
+            "Radio Logo Operation Error",
             message,
             QMessageBox.StandardButton.Ok,
         )
@@ -855,4 +1049,13 @@ class RadioLogoInstallPage(QWidget):
             not busy
             and target_available
             and self.files_list.count() > 0
+        )
+
+        self.refresh_recovery_button.setEnabled(
+            not busy and target_available
+        )
+        self.restore_previous_button.setEnabled(
+            not busy
+            and target_available
+            and bool(self.recovery_plan)
         )

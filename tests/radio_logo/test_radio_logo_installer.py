@@ -6,9 +6,12 @@ import core.radio_logo.installer as installer
 from core.radio_logo.installer import (
     KNOWN_RADIO_LOGO_WTD_NAMES,
     RadioLogoInstallError,
+    RadioLogoRecoveryAction,
     RadioLogoTarget,
     get_radio_logo_destination_dir,
     install_radio_logo_pack,
+    plan_radio_logo_recovery,
+    restore_previous_radio_logo_pack,
 )
 
 
@@ -205,3 +208,226 @@ def test_commit_failure_restores_every_existing_destination(tmp_path: Path, monk
     assert second_destination.read_bytes() == b"second-vanilla"
     assert not list(destination_dir.glob("*.backup-*"))
     assert not list(destination_dir.glob(".gtaiv_toolkit_logo_*"))
+
+
+def test_install_backups_share_one_batch_identifier(tmp_path, monkeypatch):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    destination_dir = game_root / "pc" / "textures"
+    first_destination = destination_dir / "radio_hud_colored.wtd"
+    second_destination = destination_dir / "radio_hud_noncolored.wtd"
+    first_destination.write_bytes(b"first-vanilla")
+    second_destination.write_bytes(b"second-vanilla")
+
+    first_source = _source(tmp_path, first_destination.name, b"first-modded")
+    second_source = _source(tmp_path, second_destination.name, b"second-modded")
+    monkeypatch.setattr(
+        installer,
+        "_new_backup_batch_id",
+        lambda: "20260721-120000-000001",
+    )
+
+    result = install_radio_logo_pack(
+        game_root,
+        [first_source, second_source],
+        RadioLogoTarget.GTA_IV,
+        use_direct=True,
+    )
+
+    assert {Path(item.backup_path).name for item in result} == {
+        "radio_hud_colored.wtd.backup-20260721-120000-000001",
+        "radio_hud_noncolored.wtd.backup-20260721-120000-000001",
+    }
+
+
+def test_fusionfix_recovery_removes_initial_overrides_and_preserves_them(tmp_path, monkeypatch):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    source = _source(tmp_path, "radio_hud.wtd", b"first-override")
+    destination = game_root / "update" / "pc" / "textures" / source.name
+
+    install_radio_logo_pack(
+        game_root,
+        [source],
+        RadioLogoTarget.GTA_IV,
+        use_direct=False,
+    )
+    monkeypatch.setattr(
+        installer,
+        "_new_backup_batch_id",
+        lambda: "20260721-120100-000001",
+    )
+
+    result = restore_previous_radio_logo_pack(
+        game_root,
+        RadioLogoTarget.GTA_IV,
+        use_direct=False,
+    )
+
+    assert not destination.exists()
+    assert result[0].action is RadioLogoRecoveryAction.REMOVED_OVERRIDE
+    assert result[0].restored_from_path is None
+    displaced = Path(result[0].displaced_backup_path)
+    assert displaced.read_bytes() == b"first-override"
+
+
+def test_direct_recovery_restores_only_latest_backup_batch(tmp_path, monkeypatch):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    destination_dir = game_root / "pc" / "textures"
+    first_destination = destination_dir / "radio_hud_colored.wtd"
+    second_destination = destination_dir / "radio_hud_noncolored.wtd"
+    first_destination.write_bytes(b"first-vanilla")
+    second_destination.write_bytes(b"second-vanilla")
+
+    first_source = _source(tmp_path, first_destination.name, b"first-v1")
+    second_source = _source(tmp_path, second_destination.name, b"second-v1")
+    replacement_source = tmp_path / "second-pack" / first_destination.name
+    replacement_source.parent.mkdir()
+    replacement_source.write_bytes(b"first-v2")
+
+    batch_ids = iter(
+        [
+            "20260721-120000-000001",
+            "20260721-120100-000001",
+            "20260721-120200-000001",
+        ]
+    )
+    monkeypatch.setattr(installer, "_new_backup_batch_id", lambda: next(batch_ids))
+
+    install_radio_logo_pack(
+        game_root,
+        [first_source, second_source],
+        RadioLogoTarget.GTA_IV,
+        use_direct=True,
+    )
+    install_radio_logo_pack(
+        game_root,
+        [replacement_source],
+        RadioLogoTarget.GTA_IV,
+        use_direct=True,
+    )
+
+    result = restore_previous_radio_logo_pack(
+        game_root,
+        RadioLogoTarget.GTA_IV,
+        use_direct=True,
+    )
+
+    assert len(result) == 1
+    assert result[0].action is RadioLogoRecoveryAction.RESTORED_BACKUP
+    assert first_destination.read_bytes() == b"first-v1"
+    assert second_destination.read_bytes() == b"second-v1"
+    assert Path(result[0].restored_from_path).read_bytes() == b"first-v1"
+    assert Path(result[0].displaced_backup_path).read_bytes() == b"first-v2"
+
+
+def test_recovery_without_backup_or_override_is_rejected(tmp_path):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+
+    with pytest.raises(RadioLogoInstallError, match="No previous radio-logo installation state"):
+        restore_previous_radio_logo_pack(
+            game_root,
+            RadioLogoTarget.GTA_IV,
+            use_direct=False,
+        )
+
+
+def test_recovery_commit_failure_restores_active_files(tmp_path, monkeypatch):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    destination_dir = game_root / "pc" / "textures"
+    first_destination = destination_dir / "radio_hud_colored.wtd"
+    second_destination = destination_dir / "radio_hud_noncolored.wtd"
+    first_destination.write_bytes(b"first-current")
+    second_destination.write_bytes(b"second-current")
+
+    batch_id = "20260721-120000-000001"
+    first_backup = destination_dir / f"{first_destination.name}.backup-{batch_id}"
+    second_backup = destination_dir / f"{second_destination.name}.backup-{batch_id}"
+    first_backup.write_bytes(b"first-previous")
+    second_backup.write_bytes(b"second-previous")
+
+    real_atomic_replace = installer._atomic_replace
+    recovery_replacements = 0
+
+    def fail_on_second_recovery_replace(source: Path, destination: Path) -> None:
+        nonlocal recovery_replacements
+        if source.name.startswith(".gtaiv_toolkit_logo_recovery_stage_"):
+            recovery_replacements += 1
+            if recovery_replacements == 2:
+                raise OSError("simulated recovery failure")
+        real_atomic_replace(source, destination)
+
+    monkeypatch.setattr(installer, "_atomic_replace", fail_on_second_recovery_replace)
+
+    with pytest.raises(RadioLogoInstallError, match="recovery failed and was rolled back"):
+        restore_previous_radio_logo_pack(
+            game_root,
+            RadioLogoTarget.GTA_IV,
+            use_direct=True,
+        )
+
+    assert first_destination.read_bytes() == b"first-current"
+    assert second_destination.read_bytes() == b"second-current"
+    assert first_backup.read_bytes() == b"first-previous"
+    assert second_backup.read_bytes() == b"second-previous"
+    assert not list(destination_dir.glob(".gtaiv_toolkit_logo_recovery_*"))
+
+
+
+def test_recovery_plan_describes_initial_fusionfix_override_removal(tmp_path):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    source = _source(tmp_path, "radio_hud.wtd", b"override")
+    destination = game_root / "update" / "pc" / "textures" / source.name
+
+    install_radio_logo_pack(
+        game_root,
+        [source],
+        RadioLogoTarget.GTA_IV,
+        use_direct=False,
+    )
+
+    plan = plan_radio_logo_recovery(
+        game_root,
+        RadioLogoTarget.GTA_IV,
+        use_direct=False,
+    )
+
+    assert len(plan) == 1
+    assert plan[0].destination_path == str(destination)
+    assert plan[0].action is RadioLogoRecoveryAction.REMOVED_OVERRIDE
+    assert plan[0].source_backup_path is None
+
+
+def test_recovery_plan_groups_legacy_backups_created_in_same_second(tmp_path):
+    game_root = _make_game(tmp_path, RadioLogoTarget.GTA_IV)
+    destination_dir = game_root / "pc" / "textures"
+    first = destination_dir / "radio_hud_colored.wtd"
+    second = destination_dir / "radio_hud_noncolored.wtd"
+    first.write_bytes(b"first-current")
+    second.write_bytes(b"second-current")
+
+    first_backup = destination_dir / (
+        "radio_hud_colored.wtd.backup-20260721-120000-000001"
+    )
+    second_backup = destination_dir / (
+        "radio_hud_noncolored.wtd.backup-20260721-120000-000002"
+    )
+    first_backup.write_bytes(b"first-previous")
+    second_backup.write_bytes(b"second-previous")
+
+    plan = plan_radio_logo_recovery(
+        game_root,
+        RadioLogoTarget.GTA_IV,
+        use_direct=True,
+    )
+
+    assert {Path(item.destination_path).name for item in plan} == {
+        first.name,
+        second.name,
+    }
+    assert {Path(item.source_backup_path).name for item in plan} == {
+        first_backup.name,
+        second_backup.name,
+    }
+    assert all(
+        item.action is RadioLogoRecoveryAction.RESTORED_BACKUP
+        for item in plan
+    )
