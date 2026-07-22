@@ -56,6 +56,12 @@ def remember_directory(history_key: str, path: str) -> None:
     settings.sync()
 
 
+def forget_remembered_directory(history_key: str) -> None:
+    settings = _settings()
+    settings.remove(_settings_key(history_key))
+    settings.sync()
+
+
 def _initial_directory(history_key: str, fallback: str = "") -> str:
     remembered = get_remembered_directory(history_key)
     if remembered:

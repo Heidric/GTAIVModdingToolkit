@@ -33,6 +33,7 @@ Implemented features:
 - Run a production preflight for dependencies, WTD sources, image input, and write access.
 - Render the active in-game station logos in the station-selection page.
 - Write rotating per-user application logs and create redacted support bundles from the start page.
+- Detect common local GTA IV installations and remember the selected replacement method.
 
 ### Input formats
 
@@ -152,6 +153,14 @@ Run the application:
 ```
 
 ## Usage
+
+### Startup settings
+
+The start page reuses the last valid GTA IV directory and replacement method. When no saved installation is available and automatic detection is enabled, the toolkit checks `GTAIV_PATH`, Steam's registered installation and `libraryfolders.vdf`, and common Rockstar Games Launcher and Epic Games locations.
+
+Select **Detect** to run discovery manually and choose between multiple installations. A valid game directory must contain both `GTAIV.exe` and `pc/audio/sfx`.
+
+Open **Settings & About** to change the saved installation, select the default replacement method, enable or disable automatic detection, view build metadata, or open the application log directory.
 
 ### Single-track replacement
 
@@ -296,7 +305,8 @@ The synthetic tests do not require GTA IV files and cover:
 - TOC persistence after reopening an archive;
 - extracted-byte verification;
 - missing-path and invalid-offset failures;
-- support-bundle path redaction, log collection, and archive contents.
+- support-bundle path redaction, log collection, and archive contents;
+- GTA IV installation discovery and preference persistence.
 
 ## Third-party components
 

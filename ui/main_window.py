@@ -3,6 +3,7 @@ from pydub import AudioSegment
 
 from build_info import application_title
 from ui.pages.intro import IntroPage
+from ui.pages.settings import SettingsPage
 from ui.pages.radio_select import RadioSelectPage
 from ui.pages.song_select import SongSelectPage
 from ui.pages.replace import ReplacePage
@@ -104,7 +105,14 @@ class GTAIVEditor(QMainWindow):
 
         self.song_select_page = None
         self.radio_select_page = None
-        self.intro_page = IntroPage(on_next=self.goto_radio_select)
+        self.intro_page = IntroPage(
+            on_next=self.goto_radio_select,
+            on_settings=self.goto_settings,
+        )
+        self.settings_page = SettingsPage(
+            on_back=self.goto_intro,
+            on_saved=self.on_settings_saved,
+        )
         self.replace_page = None
         self.batch_replace_page = None
         self.radio_logo_install_page = None
@@ -120,6 +128,7 @@ class GTAIVEditor(QMainWindow):
 
     def init_ui(self):
         self.stack.addWidget(self.intro_page)
+        self.stack.addWidget(self.settings_page)
         self.stack.addWidget(self.progress_page)
         self.stack.setCurrentWidget(self.intro_page)
 
@@ -161,6 +170,14 @@ class GTAIVEditor(QMainWindow):
         self.stack.setCurrentWidget(self.radio_select_page)
 
     def goto_intro(self):
+        self.stack.setCurrentWidget(self.intro_page)
+
+    def goto_settings(self):
+        self.settings_page.reload()
+        self.stack.setCurrentWidget(self.settings_page)
+
+    def on_settings_saved(self):
+        self.intro_page.reload_preferences(auto_detect=False)
         self.stack.setCurrentWidget(self.intro_page)
 
     def goto_song_select(self, selected_radio):
