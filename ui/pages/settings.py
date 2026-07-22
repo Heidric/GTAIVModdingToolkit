@@ -33,6 +33,7 @@ from ui.path_dialogs import (
     select_existing_directory,
 )
 from ui.styles import BUTTON_STYLE, GROUP_BOX_STYLE, LINE_EDIT_STYLE, RADIO_BUTTON_STYLE
+from ui.system_check_dialog import SystemCheckDialog
 
 
 class SettingsPage(QWidget):
@@ -112,6 +113,11 @@ class SettingsPage(QWidget):
         self.log_directory_label.setStyleSheet("color: #B0BEC5;")
         about_layout.addWidget(self.log_directory_label)
 
+        system_check_button = QPushButton("Run System Check", self)
+        system_check_button.setStyleSheet(BUTTON_STYLE)
+        system_check_button.clicked.connect(self.open_system_check)
+        about_layout.addWidget(system_check_button)
+
         open_logs_button = QPushButton("Open Logs Folder", self)
         open_logs_button.setStyleSheet(BUTTON_STYLE)
         open_logs_button.clicked.connect(self.open_logs_folder)
@@ -182,6 +188,14 @@ class SettingsPage(QWidget):
             selected = installations[labels.index(label)]
 
         self.path_input.setText(str(selected.path))
+
+    def open_system_check(self):
+        dialog = SystemCheckDialog(
+            gtaiv_path=self.path_input.text().strip() or None,
+            use_direct=self.direct_radio.isChecked(),
+            parent=self,
+        )
+        dialog.exec()
 
     def open_logs_folder(self):
         directory = application_log_directory()

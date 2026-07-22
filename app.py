@@ -11,8 +11,9 @@ from core.app_logging import (
     get_application_logger,
     shutdown_application_logging,
 )
+from core.system_check import format_system_check_report, run_system_check
 from ui.main_window import GTAIVEditor
-from utils import check_ffmpeg, install_ffmpeg, resource_path
+from utils import check_ffmpeg, resource_path
 
 
 class SplashWindow(QMainWindow):
@@ -44,6 +45,16 @@ def run_packaged_smoke_test() -> int:
     return 0
 
 
+def _option_value(option: str) -> str | None:
+    if option not in sys.argv:
+        return None
+    index = sys.argv.index(option)
+    try:
+        return sys.argv[index + 1]
+    except IndexError as exc:
+        raise SystemExit(f"{option} requires a value") from exc
+
+
 def main() -> int:
     if "--write-build-info" in sys.argv:
         option_index = sys.argv.index("--write-build-info")
@@ -61,6 +72,15 @@ def main() -> int:
 
     if "--smoke-test" in sys.argv:
         return run_packaged_smoke_test()
+
+    if "--doctor" in sys.argv:
+        report = run_system_check(
+            _option_value("--gtaiv-path"),
+            use_direct="--direct" in sys.argv,
+            packaged_only="--packaged-only" in sys.argv,
+        )
+        print(format_system_check_report(report))
+        return report.exit_code
 
     log_path = configure_application_logging()
     logger = get_application_logger()
@@ -94,10 +114,10 @@ def main() -> int:
         splash.show()
 
         if not check_ffmpeg():
-            logger.warning("FFmpeg was not found through PATH")
-            if not install_ffmpeg(splash):
-                logger.error("Application startup stopped because FFmpeg is unavailable")
-                return 1
+            logger.warning(
+                "FFmpeg was not found through PATH; audio replacement remains unavailable "
+                "until it is installed"
+            )
 
         editor = GTAIVEditor()
         editor.show()

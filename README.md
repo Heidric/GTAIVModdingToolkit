@@ -35,6 +35,7 @@ Implemented features:
 - Write rotating per-user application logs and create redacted support bundles from the start page.
 - Detect common local GTA IV installations and remember the selected replacement method.
 - Restore the latest paired station-RPF and `sounds.dat15` audio state from the UI.
+- Run packaged-resource, dependency, installation, and write-access checks from the UI or command line.
 
 ### Input formats
 
@@ -141,12 +142,12 @@ An explicit key can be supplied through the vendored parser API, although the GU
 ## Requirements
 
 - Grand Theft Auto IV.
-- FFmpeg available through `PATH`.
+- FFmpeg and FFprobe available through `PATH` for audio replacement.
 - FusionFix for the recommended override-based replacement mode.
 
 Python 3.12 is required only when running from source. The portable Windows build includes the Python runtime and application dependencies.
 
-The application can offer to install FFmpeg when it is missing. Manual installation is also supported.
+The application starts without FFmpeg so logo tools, recovery, settings, and diagnostics remain available. Audio replacement checks for FFmpeg when an audio operation starts and can offer installation at that point.
 
 Episodes from Liberty City support has not been validated.
 
@@ -183,6 +184,17 @@ On Windows, discovery also checks a bounded list of common game folders on each 
 Select **Detect** to run discovery manually and choose between multiple installations. A valid game directory must contain both `GTAIV.exe` and `pc/audio/sfx`.
 
 Open **Settings & About** to change the saved installation, select the default replacement method, enable or disable automatic detection, view build metadata, or open the application log directory.
+
+Select **Run System Check** in **Settings & About** to verify packaged resources, Python dependencies, FFmpeg/FFprobe availability, the selected GTA IV installation, FusionFix, radio archives, logo textures, and destination write access. Missing FFmpeg is reported as a warning because non-audio features remain usable.
+
+The same report is available from the command line:
+
+```bash
+.venv/Scripts/python.exe app.py --doctor --gtaiv-path "D:\Games\Grand Theft Auto IV"
+.venv/Scripts/python.exe app.py --doctor --gtaiv-path "D:\Games\Grand Theft Auto IV" --direct
+```
+
+Use `--packaged-only` to check application resources and dependencies without requiring a GTA IV installation.
 
 ### Single-track replacement
 
@@ -302,9 +314,10 @@ Build the portable Windows directory locally:
 .venv/Scripts/python.exe -m pip install -r requirements-build.txt
 .venv/Scripts/python.exe -m PyInstaller --clean --noconfirm GTAIVModdingToolkit.spec
 dist/GTAIVModdingToolkit/GTAIVModdingToolkit.exe --smoke-test
+dist/GTAIVModdingToolkit/GTAIVModdingToolkit.exe --doctor --packaged-only
 ```
 
-The portable workflow runs the regression suite, builds the one-directory application, smoke-tests the packaged executable, and publishes a ZIP artifact.
+The portable workflow runs the regression suite, builds the one-directory application, smoke-tests and system-checks the packaged executable, and publishes a ZIP artifact.
 
 GitHub Actions runs the compile check and test suite on Windows with Python 3.12 for pushes and pull requests.
 

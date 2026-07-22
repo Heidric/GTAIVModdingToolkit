@@ -84,6 +84,9 @@ jobs:
       - name: Smoke-test packaged executable
         run: .\dist\GTAIVModdingToolkit\GTAIVModdingToolkit.exe --smoke-test
 
+      - name: Run packaged system check
+        run: .\dist\GTAIVModdingToolkit\GTAIVModdingToolkit.exe --doctor --packaged-only
+
       - name: Verify packaged version
         shell: pwsh
         run: |
