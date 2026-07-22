@@ -32,6 +32,7 @@ Implemented features:
 - Restore the previous complete radio-logo state from the application.
 - Run a production preflight for dependencies, WTD sources, image input, and write access.
 - Render the active in-game station logos in the station-selection page.
+- Write rotating per-user application logs and create redacted support bundles from the start page.
 
 ### Input formats
 
@@ -191,6 +192,24 @@ After installation or recovery, returning to the station-selection page rebuilds
 
 Recovery operates on one complete backup batch. In direct mode it restores the newest timestamped WTD backups. In FusionFix mode it restores the newest override backups, or removes the first override batch so the game falls back to its original WTD files. The displaced active state is backed up, allowing the recovery operation itself to be reversed.
 
+### Diagnostics and support bundles
+
+The application writes rotating text logs under the current user's local application-data directory. On Windows the default location is:
+
+```text
+%LOCALAPPDATA%\GTAIVModdingToolkit\logs\
+```
+
+Select **Create Support Bundle** on the start page to export a ZIP containing:
+
+- application version and build metadata;
+- Windows and Python runtime details;
+- FFmpeg and bundled-tool availability;
+- presence, size, and modification time for relevant GTA IV paths;
+- a limited tail of recent application logs.
+
+The bundle does not include GTA IV executables, RPF/WTD archives, audio, replacement images, or other game-file contents. Known user-home, temporary, and selected GTA IV paths are replaced with placeholders. Review the ZIP before sharing it.
+
 ### WTD write safety
 
 The production image workflow uses **surgical payload patching**. It preserves the original RSC5 header, virtual metadata, texture table, dimensions, formats, mip counts, and every physical byte outside the selected texture payloads. The **Check Readiness** action verifies Pillow, the texfury encoder, station source WTDs, the input image, temporary storage, and destination write access before installation.
@@ -276,7 +295,8 @@ The synthetic tests do not require GTA IV files and cover:
 - preservation of adjacent entries;
 - TOC persistence after reopening an archive;
 - extracted-byte verification;
-- missing-path and invalid-offset failures.
+- missing-path and invalid-offset failures;
+- support-bundle path redaction, log collection, and archive contents.
 
 ## Third-party components
 

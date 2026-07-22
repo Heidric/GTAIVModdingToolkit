@@ -10,6 +10,7 @@ class PathHistoryKey:
     BATCH_REPLACEMENT_AUDIO = "batch_replacement_audio"
     RADIO_LOGO_PACK = "radio_logo_pack"
     RADIO_LOGO_IMAGE = "radio_logo_image"
+    SUPPORT_BUNDLE = "support_bundle"
 
 
 _SETTINGS_ORGANIZATION = "Heidric"
