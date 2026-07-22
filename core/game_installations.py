@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -14,6 +15,18 @@ _STEAM_GAME_PATHS = (
     Path("steamapps/common/Grand Theft Auto IV Complete Edition/GTAIV"),
     Path("steamapps/common/Grand Theft Auto IV Complete Edition"),
 )
+
+_COMMON_DRIVE_GAME_PATHS = (
+    Path("Games/Grand Theft Auto IV"),
+    Path("Games/Grand Theft Auto IV Complete Edition"),
+    Path("Games/GTA IV"),
+    Path("Games/GTAIV"),
+    Path("Games/Rockstar Games/Grand Theft Auto IV"),
+    Path("GOG Games/Grand Theft Auto IV"),
+    Path("Rockstar Games/Grand Theft Auto IV"),
+)
+
+_DRIVE_FIXED = 3
 
 
 @dataclass(frozen=True)
@@ -136,6 +149,47 @@ def _common_launcher_candidates(environment: Mapping[str, str]) -> tuple[tuple[P
     return tuple(candidates)
 
 
+def _windows_fixed_drive_roots() -> tuple[Path, ...]:
+    """Return mounted fixed Windows drives without recursively scanning them."""
+
+    if os.name != "nt":
+        return ()
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        drive_mask = int(kernel32.GetLogicalDrives())
+    except (AttributeError, OSError, ValueError):
+        return ()
+
+    roots: list[Path] = []
+    for index, letter in enumerate(string.ascii_uppercase):
+        if not drive_mask & (1 << index):
+            continue
+
+        root_text = f"{letter}:\\"
+        try:
+            drive_type = int(kernel32.GetDriveTypeW(root_text))
+        except (AttributeError, OSError, ValueError):
+            continue
+        if drive_type == _DRIVE_FIXED:
+            roots.append(Path(root_text))
+
+    return tuple(roots)
+
+
+def _common_drive_candidates(
+    drive_roots: Iterable[str | os.PathLike[str]],
+) -> tuple[tuple[Path, str], ...]:
+    candidates: list[tuple[Path, str]] = []
+    for raw_root in drive_roots:
+        root = Path(raw_root).expanduser()
+        for relative_path in _COMMON_DRIVE_GAME_PATHS:
+            candidates.append((root / relative_path, "Common game folder"))
+    return tuple(candidates)
+
+
 def _expanded_candidate_paths(path: Path) -> tuple[Path, ...]:
     return (path, path / "GTAIV")
 
@@ -145,6 +199,8 @@ def discover_gtaiv_installations(
     additional_candidates: Iterable[str | os.PathLike[str]] = (),
     environment: Mapping[str, str] | None = None,
     steam_roots: Iterable[str | os.PathLike[str]] | None = None,
+    drive_roots: Iterable[str | os.PathLike[str]] | None = None,
+    scan_common_drives: bool = True,
 ) -> tuple[DetectedInstallation, ...]:
     """Return valid installations in deterministic preference order."""
 
@@ -169,6 +225,13 @@ def discover_gtaiv_installations(
                 raw_candidates.append((library_root / relative_path, "Steam"))
 
     raw_candidates.extend(_common_launcher_candidates(env))
+
+    configured_drive_roots = (
+        tuple(Path(root).expanduser() for root in drive_roots)
+        if drive_roots is not None
+        else _windows_fixed_drive_roots() if scan_common_drives else ()
+    )
+    raw_candidates.extend(_common_drive_candidates(configured_drive_roots))
 
     detected: list[DetectedInstallation] = []
     seen: set[str] = set()

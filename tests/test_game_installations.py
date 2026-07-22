@@ -51,6 +51,7 @@ def test_discovery_reads_gtaiv_path_environment_variable(tmp_path):
     detected = discover_gtaiv_installations(
         environment={"GTAIV_PATH": str(game)},
         steam_roots=(),
+        drive_roots=(),
     )
 
     assert len(detected) == 1
@@ -74,8 +75,56 @@ def test_discovery_reads_additional_steam_library_and_deduplicates(tmp_path):
         additional_candidates=(game,),
         environment={},
         steam_roots=(steam,),
+        drive_roots=(),
     )
 
     assert len(detected) == 1
     assert detected[0].path == game.resolve()
+    assert detected[0].source == "Saved or selected path"
+
+
+def test_discovery_checks_common_game_folder_on_fixed_drive(tmp_path):
+    drive = tmp_path / "D"
+    game = make_installation(drive / "Games" / "Grand Theft Auto IV")
+
+    detected = discover_gtaiv_installations(
+        environment={},
+        steam_roots=(),
+        drive_roots=(drive,),
+    )
+
+    assert len(detected) == 1
+    assert detected[0].path == game.resolve()
+    assert detected[0].source == "Common game folder"
+
+
+def test_discovery_checks_nested_gtaiv_directory_in_common_folder(tmp_path):
+    drive = tmp_path / "E"
+    game = make_installation(
+        drive / "GOG Games" / "Grand Theft Auto IV" / "GTAIV"
+    )
+
+    detected = discover_gtaiv_installations(
+        environment={},
+        steam_roots=(),
+        drive_roots=(drive,),
+    )
+
+    assert len(detected) == 1
+    assert detected[0].path == game.resolve()
+    assert detected[0].source == "Common game folder"
+
+
+def test_common_drive_detection_deduplicates_saved_installation(tmp_path):
+    drive = tmp_path / "F"
+    game = make_installation(drive / "Games" / "Grand Theft Auto IV")
+
+    detected = discover_gtaiv_installations(
+        additional_candidates=(game,),
+        environment={},
+        steam_roots=(),
+        drive_roots=(drive,),
+    )
+
+    assert len(detected) == 1
     assert detected[0].source == "Saved or selected path"

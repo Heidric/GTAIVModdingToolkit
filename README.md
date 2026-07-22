@@ -158,6 +158,8 @@ Run the application:
 
 The start page reuses the last valid GTA IV directory and replacement method. When no saved installation is available and automatic detection is enabled, the toolkit checks `GTAIV_PATH`, Steam's registered installation and `libraryfolders.vdf`, and common Rockstar Games Launcher and Epic Games locations.
 
+On Windows, discovery also checks a bounded list of common game folders on each fixed local drive, including `Games`, `GOG Games`, and `Rockstar Games`. It does not recursively scan entire disks.
+
 Select **Detect** to run discovery manually and choose between multiple installations. A valid game directory must contain both `GTAIV.exe` and `pc/audio/sfx`.
 
 Open **Settings & About** to change the saved installation, select the default replacement method, enable or disable automatic detection, view build metadata, or open the application log directory.
