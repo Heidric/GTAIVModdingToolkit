@@ -1,5 +1,4 @@
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QMessageBox
-from pydub import AudioSegment
 
 from build_info import application_title
 from ui.pages.intro import IntroPage
@@ -10,87 +9,9 @@ from ui.pages.replace import ReplacePage
 from ui.pages.progress import ProgressPage
 from ui.pages.batch_replace import BatchReplacePage
 from ui.pages.radio_logo_install import RadioLogoInstallPage
-from audio_utils import replace_special_audio, update_song_duration
 from utils import install_ffmpeg, check_ffmpeg
-from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
-from core.rpf import RPFParser
 from batch_replacement import BatchReplaceWorker
-import os
-import shutil
-import tempfile
-from PySide6.QtCore import QThread, Signal
-
-
-class ReplaceSongWorker(QThread):
-    progress = Signal(int)
-    finished = Signal()
-    error = Signal(str)
-
-    def __init__(self, gtaiv_path, selected_radio, selected_song, new_song_path, use_direct):
-        super().__init__()
-        self.gtaiv_path = gtaiv_path
-        self.selected_radio = selected_radio
-        self.selected_song = selected_song
-        self.new_song_path = new_song_path
-        self.use_direct = use_direct
-
-    def run(self):
-        try:
-            print("Worker started")
-
-            # Select strategy
-            if self.use_direct:
-                strategy = DirectReplacementStrategy(self.gtaiv_path)
-                print("Using Direct Replacement Strategy")
-            else:
-                strategy = FusionFixReplacementStrategy(self.gtaiv_path)
-                print("Using FusionFix Replacement Strategy")
-
-            # Prepare files (copy if needed for FusionFix)
-            strategy.prepare_rpf(self.selected_radio)
-            strategy.prepare_dat15()
-
-            rpf_path = strategy.get_rpf_path(self.selected_radio)
-            dat15_path = strategy.get_dat15_path()
-
-            radio_name = self.selected_radio[:-4].upper()
-            full_song_path = f"{radio_name}/{self.selected_song}"
-            print(f"RPF Path: {rpf_path}")
-            print(f"Dat15 Path: {dat15_path}")
-            print(f"Full Song Path: {full_song_path}")
-
-            parser = RPFParser(rpf_path, os.path.join(self.gtaiv_path, "GTAIV.exe"))
-            output_folder = tempfile.mkdtemp(prefix="gtaiv_radio_replace_")
-            try:
-                parser.extract_file(full_song_path, output_folder)
-
-                extracted_file = os.path.join(output_folder, self.selected_song)
-
-                self.progress.emit(25)
-                print("Progress 25%")
-
-                replace_special_audio(extracted_file, self.new_song_path)
-                self.progress.emit(50)
-                print("Progress 50%")
-
-                audio = AudioSegment.from_file(self.new_song_path)
-                new_song_length = int(audio.duration_seconds * 1000)
-
-                # Pass the explicit dat15 path to update_song_duration
-                update_song_duration(self.gtaiv_path, radio_name, self.selected_song, new_song_length, dat15_path=dat15_path)
-
-                self.progress.emit(75)
-                print("Progress 75%")
-
-                parser.add_file(extracted_file, full_song_path)
-            finally:
-                shutil.rmtree(output_folder, ignore_errors=True)
-            self.progress.emit(100)
-            print("Progress 100%")
-            self.finished.emit()
-        except Exception as e:
-            print(f"Worker encountered an error: {e}")
-            self.error.emit(str(e))
+from ui.workers.single_replacement import SingleTrackReplacementWorker
 
 
 class GTAIVEditor(QMainWindow):
@@ -145,15 +66,26 @@ class GTAIVEditor(QMainWindow):
                 )
                 return
 
-        self.worker = ReplaceSongWorker(
-            self.gtaiv_path, self.selected_radio, self.selected_song, self.new_song_path, self.use_direct
+        self.progress_page.update_progress(0)
+        worker = SingleTrackReplacementWorker(
+            self.gtaiv_path,
+            self.selected_radio,
+            self.selected_song,
+            self.new_song_path,
+            self.use_direct,
+        )
+        self.worker = worker
+        worker.progress.connect(self.update_progress)
+        worker.completed.connect(self.on_replace_finished)
+        worker.cancelled.connect(self.on_replace_cancelled)
+        worker.error.connect(self.on_replace_error)
+        worker.finished.connect(
+            lambda current_worker=worker: self._on_single_worker_thread_finished(
+                current_worker
+            )
         )
 
-        self.worker.progress.connect(self.update_progress)
-        self.worker.finished.connect(self.on_replace_finished)
-        self.worker.error.connect(self.on_replace_error)
-
-        self.worker.start()
+        worker.start()
         self.stack.setCurrentWidget(self.progress_page)
 
     def goto_radio_select(self, gtaiv_path, use_direct=False):
@@ -277,16 +209,30 @@ class GTAIVEditor(QMainWindow):
         self.stack.removeWidget(page)
         page.deleteLater()
 
-    def on_replace_finished(self):
-        self.worker = None
+    def on_replace_finished(self, _result):
         self.progress_page.update_progress(100)
-        QMessageBox.information(self, "Success", "The song was successfully replaced!")
+        QMessageBox.information(
+            self,
+            "Success",
+            "The song was transactionally replaced and verified.",
+        )
         self.goto_song_select(self.selected_radio)
 
+    def on_replace_cancelled(self):
+        QMessageBox.information(
+            self,
+            "Cancelled",
+            "Single-track replacement was cancelled before commit.",
+        )
+        self.stack.setCurrentWidget(self.replace_page)
+
     def on_replace_error(self, message):
-        self.worker = None
-        QMessageBox.critical(self, "Error", f"An error occurred: {message}", QMessageBox.StandardButton.Ok,
-                             QMessageBox.StandardButton.NoButton)
+        QMessageBox.critical(
+            self,
+            "Single Replacement Error",
+            f"No staged single-track changes were committed.\n\n{message}",
+            QMessageBox.StandardButton.Ok,
+        )
         self.stack.setCurrentWidget(self.replace_page)
 
     def on_batch_replace_finished(self, count):
@@ -309,12 +255,26 @@ class GTAIVEditor(QMainWindow):
         )
         self.stack.setCurrentWidget(self.batch_replace_page)
 
+    def _on_single_worker_thread_finished(self, worker):
+        if self.worker is worker:
+            self.worker = None
+        worker.deleteLater()
+
     def _on_batch_worker_thread_finished(self, worker):
         if self.worker is worker:
             self.worker = None
         worker.deleteLater()
 
     def cancel_replace(self):
+        if isinstance(self.worker, SingleTrackReplacementWorker):
+            self.worker.request_cancel()
+            QMessageBox.information(
+                self,
+                "Cancellation Requested",
+                "The replacement will stop before committing staged files.",
+            )
+            return
+
         if isinstance(self.worker, BatchReplaceWorker):
             self.worker.request_cancel()
             QMessageBox.information(
@@ -324,8 +284,8 @@ class GTAIVEditor(QMainWindow):
             )
             return
 
-        QMessageBox.information(self, "Cancelled", "The replacement operation has been cancelled.")
-        if self.worker is not None:
-            self.worker.terminate()
-            self.worker = None
-        self.stack.setCurrentWidget(self.intro_page)
+        QMessageBox.information(
+            self,
+            "Nothing to Cancel",
+            "No replacement operation is currently running.",
+        )

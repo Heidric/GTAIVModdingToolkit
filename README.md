@@ -18,7 +18,7 @@ Implemented features:
 
 - Browse GTA IV radio stations and their existing track slots.
 - Preview extracted station tracks from the application.
-- Replace one track at a time.
+- Replace one track at a time through a staged, verified transaction.
 - Replace multiple tracks in one transactional batch.
 - Automatically match batch input files to track slots by normalized filename.
 - Review and change every batch mapping before processing.
@@ -74,6 +74,19 @@ Direct mode modifies the original files under:
 ```
 
 Before modification, the toolkit creates timestamped backups next to the original RPF and `sounds.dat15` files.
+
+### Transactional single-track replacement
+
+Single-track replacement operates on staging copies of the selected station RPF and `sounds.dat15`:
+
+1. The existing track is extracted and converted inside a temporary workspace.
+2. Duration metadata is updated only in the staged `sounds.dat15`.
+3. The converted track is packed only into the staged RPF.
+4. The staged RPF is reopened and the replacement is extracted again for SHA-256 verification.
+5. Direct mode creates timestamped backups only after staging and verification succeed.
+6. The active RPF and `sounds.dat15` are replaced together; a failed final swap restores both previous files.
+
+Cancellation is cooperative and is honored before the commit starts. A failed or cancelled operation does not leave a partial FusionFix override or a half-updated direct installation.
 
 ### Transactional batch replacement
 
@@ -171,7 +184,7 @@ Open **Settings & About** to change the saved installation, select the default r
 3. Select a radio station.
 4. Select an existing track slot.
 5. Select an MP3, WAV, or OGG replacement.
-6. Wait for conversion, duration update, and RPF write to complete.
+6. Wait for staging, conversion, byte verification, and commit to complete.
 7. Test the modified station in game.
 
 ### Batch replacement
@@ -307,6 +320,7 @@ The synthetic tests do not require GTA IV files and cover:
 - TOC persistence after reopening an archive;
 - extracted-byte verification;
 - missing-path and invalid-offset failures;
+- transactional single-track staging, verification, cancellation, and rollback;
 - support-bundle path redaction, log collection, and archive contents;
 - GTA IV installation discovery and preference persistence.
 
