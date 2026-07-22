@@ -1,10 +1,11 @@
 import os
 import sys
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 from qt_material import apply_stylesheet
 
-from build_info import APP_VERSION, application_title
+from build_info import application_title, build_summary
 from ui.main_window import GTAIVEditor
 from utils import check_ffmpeg, install_ffmpeg, resource_path
 
@@ -33,11 +34,26 @@ def run_packaged_smoke_test() -> int:
     from PIL import Image  # noqa: F401 - verifies the packaged decoder
     from texfury import Texture  # noqa: F401 - verifies the packaged encoder
 
-    print(f"GTA IV Modding Toolkit {APP_VERSION} smoke test passed")
+    print(build_summary())
+    print("Packaged smoke test passed")
     return 0
 
 
 def main():
+    if "--write-build-info" in sys.argv:
+        option_index = sys.argv.index("--write-build-info")
+        try:
+            output_path = Path(sys.argv[option_index + 1]).expanduser().resolve()
+        except IndexError as exc:
+            raise SystemExit("--write-build-info requires an output path") from exc
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(build_summary() + "\n", encoding="utf-8")
+        raise SystemExit(0)
+
+    if "--version" in sys.argv:
+        print(build_summary())
+        raise SystemExit(0)
+
     if "--smoke-test" in sys.argv:
         raise SystemExit(run_packaged_smoke_test())
 
