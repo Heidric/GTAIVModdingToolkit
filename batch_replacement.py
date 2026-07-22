@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from pydub import AudioSegment
-from PySide6.QtCore import QThread, Signal
 
 from audio_utils import replace_special_audio, update_song_duration
 from core.audio_history import capture_audio_state, discard_audio_snapshot
@@ -368,38 +367,3 @@ def replace_batch_transactional(
             _remove_if_exists(rollback_dat15)
         if not committed:
             discard_audio_snapshot(history_snapshot)
-
-
-class BatchReplaceWorker(QThread):
-    progress = Signal(int)
-    completed = Signal(int)
-    cancelled = Signal()
-    error = Signal(str)
-
-    def __init__(self, gtaiv_path, selected_radio, mappings, use_direct):
-        super().__init__()
-        self.gtaiv_path = gtaiv_path
-        self.selected_radio = selected_radio
-        self.mappings = list(mappings)
-        self.use_direct = use_direct
-        self._cancel_requested = False
-
-    def request_cancel(self):
-        self._cancel_requested = True
-
-    def run(self):
-        try:
-            result = replace_batch_transactional(
-                self.gtaiv_path,
-                self.selected_radio,
-                self.mappings,
-                self.use_direct,
-                progress_callback=self.progress.emit,
-                cancellation_callback=lambda: self._cancel_requested,
-            )
-        except BatchReplacementCancelled:
-            self.cancelled.emit()
-        except Exception as exc:
-            self.error.emit(str(exc))
-        else:
-            self.completed.emit(result.replaced_count)

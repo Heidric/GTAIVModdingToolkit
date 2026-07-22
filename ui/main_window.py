@@ -11,7 +11,7 @@ from ui.pages.batch_replace import BatchReplacePage
 from ui.pages.radio_logo_install import RadioLogoInstallPage
 from ui.pages.audio_recovery import AudioRecoveryPage
 from utils import install_ffmpeg, check_ffmpeg
-from batch_replacement import BatchReplaceWorker
+from ui.workers.batch_replacement import BatchReplaceWorker
 from ui.workers.single_replacement import SingleTrackReplacementWorker
 
 
