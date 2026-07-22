@@ -24,13 +24,22 @@ from utils import resource_path
 
 
 class RadioSelectPage(QWidget):
-    def __init__(self, gtaiv_path, use_direct, on_next, on_back, on_install_logos):
+    def __init__(
+        self,
+        gtaiv_path,
+        use_direct,
+        on_next,
+        on_back,
+        on_install_logos,
+        on_recover_audio,
+    ):
         super().__init__()
         self.gtaiv_path = gtaiv_path
         self.use_direct = use_direct
         self.on_next = on_next
         self.on_back = on_back
         self.on_install_logos = on_install_logos
+        self.on_recover_audio = on_recover_audio
 
         self.selected_radio = ""
         self.dynamic_icons = {}
@@ -65,6 +74,11 @@ class RadioSelectPage(QWidget):
         self.logo_pack_button.clicked.connect(self.on_install_logos)
         self.logo_pack_button.setStyleSheet(BUTTON_STYLE)
         buttons_layout.addWidget(self.logo_pack_button)
+
+        self.audio_recovery_button = QPushButton("Audio Recovery", self)
+        self.audio_recovery_button.clicked.connect(self.on_recover_audio)
+        self.audio_recovery_button.setStyleSheet(BUTTON_STYLE)
+        buttons_layout.addWidget(self.audio_recovery_button)
 
         self.next_button = QPushButton("Next", self)
         self.next_button.clicked.connect(self.proceed)

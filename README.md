@@ -34,6 +34,7 @@ Implemented features:
 - Render the active in-game station logos in the station-selection page.
 - Write rotating per-user application logs and create redacted support bundles from the start page.
 - Detect common local GTA IV installations and remember the selected replacement method.
+- Restore the latest paired station-RPF and `sounds.dat15` audio state from the UI.
 
 ### Input formats
 
@@ -101,6 +102,12 @@ Batch replacement operates on staging copies of both the selected station RPF an
 7. Active files are replaced only after all conversions and verification checks pass.
 
 A failed or cancelled batch does not commit partial staged changes. If the final file swap itself fails, the worker restores rollback copies.
+
+### Audio recovery history
+
+Before a verified single or batch replacement commits, the toolkit captures the active station RPF and global `sounds.dat15` as one recovery state under `<gtaiv>/.gtaiv_toolkit/audio-history/`. Same-volume files use hard links when available and fall back to copies. History is bounded per replacement mode.
+
+Recovery always restores the latest paired state for the current mode. The displaced active state is captured first, so running recovery again reverses the recovery. A failed two-file recovery swap restores the state that was active when recovery began.
 
 ## RPF handling
 
@@ -200,6 +207,10 @@ Open **Settings & About** to change the saved installation, select the default r
 
 The batch page displays the number of replaceable slots, selected files, and remaining slots before processing starts.
 
+### Audio recovery
+
+Open **Audio Recovery** from the station-selection page. The page shows the latest paired audio state for the current FusionFix or direct mode, including the affected station and whether the previous RPF and `sounds.dat15` existed. Select **Restore Previous Audio State** to restore both files transactionally.
+
 ### Radio-logo replacement and recovery
 
 1. Open **Radio Logo Tools** from the station-selection page.
@@ -259,23 +270,11 @@ Radio-logo changes can be reverted from **Radio Logo Tools → Recovery**. Manua
 <gtaiv>/update/TBoGT/pc/textures/
 ```
 
-To remove a station audio override, delete its RPF from:
-
-```text
-<gtaiv>/update/pc/audio/sfx/
-```
-
-Track durations are stored in:
-
-```text
-<gtaiv>/update/pc/audio/config/sounds.dat15
-```
-
-Deleting the overridden `sounds.dat15` reverts duration metadata for every station represented by that override file.
+Use **Audio Recovery** to restore the latest paired station RPF and `sounds.dat15` state. Manual deletion remains possible, but deleting the shared override `sounds.dat15` can revert duration metadata for multiple stations at once.
 
 ### Direct replacement mode
 
-Use **Radio Logo Tools → Recovery** to restore the latest complete radio-logo backup batch. Audio and logo backups are also stored next to the modified files with timestamped names. If no usable backup remains, restore the original game files through the game platform's file-verification mechanism.
+Use **Audio Recovery** for the latest paired audio state and **Radio Logo Tools → Recovery** for the latest complete radio-logo state. Direct-mode timestamped backups remain beside modified files. If no usable recovery state remains, restore the original game files through the game platform's file-verification mechanism.
 
 ## Development and tests
 
@@ -321,6 +320,7 @@ The synthetic tests do not require GTA IV files and cover:
 - extracted-byte verification;
 - missing-path and invalid-offset failures;
 - transactional single-track staging, verification, cancellation, and rollback;
+- paired audio-history capture, reversible recovery, and failed-swap rollback;
 - support-bundle path redaction, log collection, and archive contents;
 - GTA IV installation discovery and preference persistence.
 

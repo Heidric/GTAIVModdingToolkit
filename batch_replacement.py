@@ -7,6 +7,7 @@ from pydub import AudioSegment
 from PySide6.QtCore import QThread, Signal
 
 from audio_utils import replace_special_audio, update_song_duration
+from core.audio_history import capture_audio_state, discard_audio_snapshot
 from core.rpf import RPFParser
 from replacement_strategy import DirectReplacementStrategy, FusionFixReplacementStrategy
 
@@ -68,6 +69,7 @@ class BatchReplaceWorker(QThread):
         rollback_rpf = None
         rollback_dat15 = None
         staged_dat15_backup = None
+        history_snapshot = None
         committed = False
 
         strategy = (
@@ -84,6 +86,12 @@ class BatchReplaceWorker(QThread):
             if not self.mappings:
                 raise ValueError("No track mappings were provided.")
 
+            history_snapshot = capture_audio_state(
+                self.gtaiv_path,
+                self.selected_radio,
+                self.use_direct,
+                reason="batch replacement",
+            )
             strategy.prepare_rpf(self.selected_radio)
             strategy.prepare_dat15()
 
@@ -196,6 +204,8 @@ class BatchReplaceWorker(QThread):
             _remove_if_exists(rollback_rpf)
             _remove_if_exists(rollback_dat15)
             _remove_if_exists(staged_dat15_backup)
+            if not committed:
+                discard_audio_snapshot(history_snapshot)
 
             if not committed and not self.use_direct:
                 if not rpf_existed_before:

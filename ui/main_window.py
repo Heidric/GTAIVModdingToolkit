@@ -9,6 +9,7 @@ from ui.pages.replace import ReplacePage
 from ui.pages.progress import ProgressPage
 from ui.pages.batch_replace import BatchReplacePage
 from ui.pages.radio_logo_install import RadioLogoInstallPage
+from ui.pages.audio_recovery import AudioRecoveryPage
 from utils import install_ffmpeg, check_ffmpeg
 from batch_replacement import BatchReplaceWorker
 from ui.workers.single_replacement import SingleTrackReplacementWorker
@@ -37,6 +38,7 @@ class GTAIVEditor(QMainWindow):
         self.replace_page = None
         self.batch_replace_page = None
         self.radio_logo_install_page = None
+        self.audio_recovery_page = None
         self.progress_page = ProgressPage(on_cancel=self.cancel_replace)
 
         self.setWindowTitle(application_title())
@@ -97,6 +99,7 @@ class GTAIVEditor(QMainWindow):
             on_next=self.goto_song_select,
             on_back=self.goto_intro,
             on_install_logos=self.goto_radio_logo_install,
+            on_recover_audio=self.goto_audio_recovery,
         )
         self.stack.addWidget(self.radio_select_page)
         self.stack.setCurrentWidget(self.radio_select_page)
@@ -141,6 +144,19 @@ class GTAIVEditor(QMainWindow):
     def goto_radio_logo_install_back(self):
         if self.radio_select_page is not None:
             self.radio_select_page.refresh_icons()
+        self.stack.setCurrentWidget(self.radio_select_page)
+
+    def goto_audio_recovery(self):
+        self._discard_page(self.audio_recovery_page)
+        self.audio_recovery_page = AudioRecoveryPage(
+            gtaiv_path=self.gtaiv_path,
+            use_direct=self.use_direct,
+            on_back=self.goto_audio_recovery_back,
+        )
+        self.stack.addWidget(self.audio_recovery_page)
+        self.stack.setCurrentWidget(self.audio_recovery_page)
+
+    def goto_audio_recovery_back(self):
         self.stack.setCurrentWidget(self.radio_select_page)
 
     def goto_batch_replace(self, songs):

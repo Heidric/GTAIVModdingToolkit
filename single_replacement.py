@@ -14,6 +14,7 @@ from typing import Callable
 from pydub import AudioSegment
 
 from audio_utils import replace_special_audio, update_song_duration
+from core.audio_history import capture_audio_state, discard_audio_snapshot
 from core.rpf import RPFParser
 
 ProgressCallback = Callable[[int], None]
@@ -174,6 +175,7 @@ def replace_single_track_transactional(
     rollback_dat15: Path | None = None
     rpf_backup: Path | None = None
     dat15_backup: Path | None = None
+    history_snapshot = None
     rpf_existed_before = target_rpf.is_file()
     dat15_existed_before = target_dat15.is_file()
     committed = False
@@ -256,6 +258,12 @@ def replace_single_track_transactional(
                 target_rpf,
                 target_dat15,
             )
+        history_snapshot = capture_audio_state(
+            root,
+            selected_radio,
+            use_direct,
+            reason="single-track replacement",
+        )
 
         try:
             replace_file(str(staged_rpf), str(target_rpf))
@@ -272,6 +280,8 @@ def replace_single_track_transactional(
                 shutil.copy2(rollback_dat15, target_dat15)
             else:
                 _remove_if_exists(target_dat15)
+            discard_audio_snapshot(history_snapshot)
+            history_snapshot = None
             raise
 
         _emit_progress(progress_callback, 100)
@@ -287,6 +297,8 @@ def replace_single_track_transactional(
         _remove_if_exists(staged_dat15_backup)
         _remove_if_exists(rollback_rpf)
         _remove_if_exists(rollback_dat15)
+        if not committed:
+            discard_audio_snapshot(history_snapshot)
 
         if not committed and not use_direct:
             if not rpf_existed_before:
