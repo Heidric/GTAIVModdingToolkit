@@ -1,0 +1,63 @@
+name: Portable Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+    paths:
+      - ".github/workflows/portable-windows.yml"
+      - "GTAIVModdingToolkit.spec"
+      - "packaging/**"
+      - "requirements-build.txt"
+      - "app.py"
+      - "build_info.py"
+      - "utils.py"
+      - "core/**"
+      - "ui/**"
+      - "assets/**"
+      - "tools/**"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+            requirements-build.txt
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip -r requirements-build.txt
+
+      - name: Run regression suite
+        run: python -m pytest -q
+
+      - name: Build portable application
+        run: python -m PyInstaller --clean --noconfirm GTAIVModdingToolkit.spec
+
+      - name: Smoke-test packaged executable
+        run: .\dist\GTAIVModdingToolkit\GTAIVModdingToolkit.exe --smoke-test
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: Compress-Archive -Path .\dist\GTAIVModdingToolkit\* -DestinationPath .\dist\GTAIVModdingToolkit-windows-x64.zip -Force
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GTAIVModdingToolkit-windows-${{ github.sha }}
+          path: dist/GTAIVModdingToolkit-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14

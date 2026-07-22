@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 import subprocess
 import urllib.request
 import zipfile
@@ -11,12 +12,11 @@ from ui.styles import MESSAGE_BOX_STYLE, PROGRESS_DIALOG_STYLE
 
 
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+    """Return a resource path independent of the process working directory."""
+    base_path = Path(
+        getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
+    )
+    return str(base_path / relative_path)
 
 
 def is_admin():

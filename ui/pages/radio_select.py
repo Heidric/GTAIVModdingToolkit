@@ -1,22 +1,39 @@
 import os
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QScrollArea, QGridLayout, QToolButton, QButtonGroup, \
-    QPushButton, QMessageBox, QHBoxLayout
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QIcon
 
-from ui.styles import TOOL_BUTTON_STYLE, SCROLL_AREA_STYLE, BUTTON_STYLE
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.radio_logo.ui_icons import (
+    build_active_station_icon_cache,
+    resolve_station_icon_path,
+)
+from ui.styles import BUTTON_STYLE, SCROLL_AREA_STYLE, TOOL_BUTTON_STYLE
 from utils import resource_path
 
 
 class RadioSelectPage(QWidget):
-    def __init__(self, gtaiv_path, on_next, on_back, on_install_logos):
+    def __init__(self, gtaiv_path, use_direct, on_next, on_back, on_install_logos):
         super().__init__()
         self.gtaiv_path = gtaiv_path
+        self.use_direct = use_direct
         self.on_next = on_next
         self.on_back = on_back
         self.on_install_logos = on_install_logos
 
         self.selected_radio = ""
+        self.dynamic_icons = {}
 
         self.layout = QVBoxLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -67,34 +84,33 @@ class RadioSelectPage(QWidget):
 
     def load_radio_files(self):
         sfx_path = os.path.abspath(os.path.join(self.gtaiv_path, "pc/audio/sfx"))
-        self.radio_files = [
-            f for f in os.listdir(sfx_path) if f.startswith("radio_") and f.endswith(".rpf")
-        ]
+        self.radio_files = sorted(
+            (
+                filename
+                for filename in os.listdir(sfx_path)
+                if filename.startswith("radio_") and filename.endswith(".rpf")
+            ),
+            key=str.casefold,
+        )
 
         if not self.radio_files:
-            QMessageBox.warning(self, "No Radios Found", "No radio files found in the specified directory.",
-                                QMessageBox.StandardButton.Ok,
-                                QMessageBox.StandardButton.NoButton)
+            QMessageBox.warning(
+                self,
+                "No Radios Found",
+                "No radio files found in the specified directory.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
 
-        icon_size = QSize(120, 120)
+        self._rebuild_dynamic_icons()
         button_size = QSize(180, 180)
 
         for index, radio_file in enumerate(self.radio_files):
             radio_name = radio_file[:-4]
-            icon_path = resource_path(os.path.join('assets', 'radio', f"{radio_name}.png"))
-
             button = QToolButton(self)
-            button.setText(radio_name.replace('radio_', '').upper())
-
-            if os.path.exists(icon_path):
-                pixmap = QPixmap(icon_path).scaled(icon_size, Qt.AspectRatioMode.KeepAspectRatio,
-                                                   Qt.TransformationMode.SmoothTransformation)
-                icon_img = QIcon(pixmap)
-                button.setIcon(icon_img)
-                button.setIconSize(icon_size)
-            else:
-                button.setIcon(QIcon(":/icons/radio_default.png"))  # Fallback icon
+            button.setText(radio_name.replace("radio_", "").upper())
+            self._set_radio_icon(radio_name, button)
 
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             button.setFixedSize(button_size)
@@ -107,6 +123,47 @@ class RadioSelectPage(QWidget):
             row, column = divmod(index, 3)
             self.radio_grid_layout.addWidget(button, row, column)
 
+    def _rebuild_dynamic_icons(self):
+        try:
+            self.dynamic_icons = build_active_station_icon_cache(
+                self.gtaiv_path,
+                use_direct=self.use_direct,
+            )
+        except Exception as exc:
+            print(f"Unable to refresh active radio-logo icons: {exc}")
+            self.dynamic_icons = {}
+
+    def _set_radio_icon(self, radio_name, button):
+        icon_size = QSize(120, 120)
+        dynamic_path = resolve_station_icon_path(radio_name, self.dynamic_icons)
+        bundled_path = resource_path(
+            os.path.join("assets", "radio", f"{radio_name}.png")
+        )
+        icon_path = str(dynamic_path) if dynamic_path is not None else bundled_path
+
+        pixmap = QPixmap(icon_path)
+        if pixmap.isNull():
+            button.setIcon(QIcon(":/icons/radio_default.png"))
+            return
+
+        button.setIcon(
+            QIcon(
+                pixmap.scaled(
+                    icon_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        )
+        button.setIconSize(icon_size)
+
+    def refresh_icons(self):
+        """Reload active WTD textures after logo installation or recovery."""
+
+        self._rebuild_dynamic_icons()
+        for radio_name, button in self.radio_buttons.items():
+            self._set_radio_icon(radio_name, button)
+
     def radio_selected(self, button):
         for radio_name, btn in self.radio_buttons.items():
             if btn == button:
@@ -117,9 +174,13 @@ class RadioSelectPage(QWidget):
 
     def proceed(self):
         if not self.selected_radio:
-            QMessageBox.warning(self, "No Radio Selected", "Please select a radio to proceed.",
-                                QMessageBox.StandardButton.Ok,
-                                QMessageBox.StandardButton.NoButton)
+            QMessageBox.warning(
+                self,
+                "No Radio Selected",
+                "Please select a radio to proceed.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
 
         self.on_next(self.selected_radio)

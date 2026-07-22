@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QMessageBox
 from pydub import AudioSegment
 
+from build_info import application_title
 from ui.pages.intro import IntroPage
 from ui.pages.radio_select import RadioSelectPage
 from ui.pages.song_select import SongSelectPage
@@ -109,7 +110,7 @@ class GTAIVEditor(QMainWindow):
         self.radio_logo_install_page = None
         self.progress_page = ProgressPage(on_cancel=self.cancel_replace)
 
-        self.setWindowTitle("GTA IV Modding Toolkit")
+        self.setWindowTitle(application_title())
         self.setMinimumSize(800, 600)
 
         self.stack = QStackedWidget()
@@ -151,6 +152,7 @@ class GTAIVEditor(QMainWindow):
         self.use_direct = use_direct
         self.radio_select_page = RadioSelectPage(
             gtaiv_path=self.gtaiv_path,
+            use_direct=self.use_direct,
             on_next=self.goto_song_select,
             on_back=self.goto_intro,
             on_install_logos=self.goto_radio_logo_install,
@@ -188,6 +190,8 @@ class GTAIVEditor(QMainWindow):
         self.stack.setCurrentWidget(self.radio_logo_install_page)
 
     def goto_radio_logo_install_back(self):
+        if self.radio_select_page is not None:
+            self.radio_select_page.refresh_icons()
         self.stack.setCurrentWidget(self.radio_select_page)
 
     def goto_batch_replace(self, songs):

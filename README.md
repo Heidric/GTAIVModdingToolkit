@@ -3,6 +3,7 @@
 A Windows desktop toolkit for modifying Grand Theft Auto IV assets.
 
 [![Tests](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml/badge.svg)](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml)
+[![Portable Windows Build](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/portable-windows.yml/badge.svg)](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/portable-windows.yml)
 
 <div style="display: flex; justify-content: space-between; margin: 20px 0;">
     <img src="assets/image.png" alt="Radio station selection interface" width="400"/>
@@ -30,6 +31,7 @@ Implemented features:
 - Install radio-logo WTD changes transactionally in FusionFix or direct mode.
 - Restore the previous complete radio-logo state from the application.
 - Run a production preflight for dependencies, WTD sources, image input, and write access.
+- Render the active in-game station logos in the station-selection page.
 
 ### Input formats
 
@@ -117,15 +119,22 @@ An explicit key can be supplied through the vendored parser API, although the GU
 ## Requirements
 
 - Grand Theft Auto IV.
-- Python 3.12.
 - FFmpeg available through `PATH`.
 - FusionFix for the recommended override-based replacement mode.
+
+Python 3.12 is required only when running from source. The portable Windows build includes the Python runtime and application dependencies.
 
 The application can offer to install FFmpeg when it is missing. Manual installation is also supported.
 
 Episodes from Liberty City support has not been validated.
 
 ## Installation
+
+### Portable Windows build
+
+Download the `GTAIVModdingToolkit-windows-*.zip` artifact from the **Portable Windows Build** workflow, extract the complete directory, and run `GTAIVModdingToolkit.exe`. Keep the `_internal` directory beside the executable.
+
+### Run from source
 
 ```bash
 git clone https://github.com/Heidric/GTAIVModdingToolkit.git
@@ -177,6 +186,8 @@ The batch page displays the number of replaceable slots, selected files, and rem
 7. To undo the latest logo operation, open the **Recovery** tab and select **Restore Previous Logo State**.
 
 The image workflow changes existing `_col` and `_bw` payloads while preserving the original WTD resource layout. Generated package directories are temporary unless explicitly requested through the backend API.
+
+After installation or recovery, returning to the station-selection page rebuilds its icons from the active GTA IV WTD files. The displayed icon therefore follows the current direct or FusionFix texture state instead of the bundled identification image.
 
 Recovery operates on one complete backup batch. In direct mode it restores the newest timestamped WTD backups. In FusionFix mode it restores the newest override backups, or removes the first override batch so the game falls back to its original WTD files. The displaced active state is backed up, allowing the recovery operation itself to be reversed.
 
@@ -242,6 +253,16 @@ Compile-check the tested Python modules:
 ```bash
 .venv/Scripts/python.exe -m compileall -q core ui vendor tests
 ```
+
+Build the portable Windows directory locally:
+
+```bash
+.venv/Scripts/python.exe -m pip install -r requirements-build.txt
+.venv/Scripts/python.exe -m PyInstaller --clean --noconfirm GTAIVModdingToolkit.spec
+dist/GTAIVModdingToolkit/GTAIVModdingToolkit.exe --smoke-test
+```
+
+The portable workflow runs the regression suite, builds the one-directory application, smoke-tests the packaged executable, and publishes a ZIP artifact.
 
 GitHub Actions runs the compile check and test suite on Windows with Python 3.12 for pushes and pull requests.
 
