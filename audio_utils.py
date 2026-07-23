@@ -5,7 +5,7 @@ import tempfile
 import shutil
 import math
 from pydub import AudioSegment
-from utils import resource_path, check_ffmpeg
+from core.runtime_tools import check_ffmpeg, resource_path
 
 def get_ivam_path():
     """Returns absolute path to ivam.exe and verifies existence."""

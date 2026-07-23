@@ -1,6 +1,5 @@
 import os
 import sys
-from pathlib import Path
 import subprocess
 import urllib.request
 import zipfile
@@ -9,14 +8,8 @@ import ctypes
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from PySide6.QtCore import Qt
 from ui.styles import MESSAGE_BOX_STYLE, PROGRESS_DIALOG_STYLE
+from core.runtime_tools import check_ffmpeg, resource_path
 
-
-def resource_path(relative_path):
-    """Return a resource path independent of the process working directory."""
-    base_path = Path(
-        getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
-    )
-    return str(base_path / relative_path)
 
 
 def is_admin():
@@ -48,14 +41,6 @@ def restart_as_admin():
         print(f"Failed to restart as admin: {e}")
         return False
 
-
-def check_ffmpeg():
-    """Check if FFmpeg is available in the system PATH"""
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        return True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
 
 
 def set_system_path_env(new_path):

@@ -1,6 +1,5 @@
 import importlib.util
 import json
-import sys
 import types
 from pathlib import Path
 
@@ -9,28 +8,24 @@ import pytest
 
 def _load_audio_utils():
     module_path = Path(__file__).resolve().parents[1] / "audio_utils.py"
-    utils_stub = types.ModuleType("utils")
-    utils_stub.resource_path = lambda value: value
-    utils_stub.check_ffmpeg = lambda: True
-
-    original_utils = sys.modules.get("utils")
-    sys.modules["utils"] = utils_stub
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "audio_utils_hardening_target",
-            module_path,
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        if original_utils is None:
-            sys.modules.pop("utils", None)
-        else:
-            sys.modules["utils"] = original_utils
+    spec = importlib.util.spec_from_file_location(
+        "audio_utils_hardening_target",
+        module_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 audio_utils = _load_audio_utils()
+
+
+def test_audio_utils_uses_qt_independent_runtime_helpers():
+    module_path = Path(__file__).resolve().parents[1] / "audio_utils.py"
+    source = module_path.read_text(encoding="utf-8")
+
+    assert "from core.runtime_tools import" in source
+    assert "from utils import" not in source
 
 
 def _write_dat15_json(output_dir, payload):
