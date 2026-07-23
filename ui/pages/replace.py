@@ -1,7 +1,6 @@
-import os
-
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QMessageBox
 from PySide6.QtCore import Qt
+from core.audio_input import AUDIO_FILE_FILTER, validate_replacement_audio
 from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE
 from ui.path_dialogs import PathHistoryKey, remember_directory, select_open_file
 
@@ -52,7 +51,7 @@ class ReplacePage(QWidget):
             self,
             "Select New Song",
             PathHistoryKey.REPLACEMENT_AUDIO,
-            file_filter="Audio Files (*.mp3 *.wav *.ogg)",
+            file_filter=AUDIO_FILE_FILTER,
             fallback=self.new_song_input.text().strip(),
         )
         if new_song_path:
@@ -60,11 +59,18 @@ class ReplacePage(QWidget):
 
     def replace(self):
         new_song_path = self.new_song_input.text().strip()
-        if not new_song_path or not os.path.isfile(new_song_path):
-            QMessageBox.warning(self, "Invalid File", "Please select a valid audio file.",
-                                QMessageBox.StandardButton.Ok,
-                                QMessageBox.StandardButton.NoButton)
+        try:
+            replacement_audio = validate_replacement_audio(new_song_path)
+        except (FileNotFoundError, ValueError) as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid File",
+                str(exc),
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
 
-        remember_directory(PathHistoryKey.REPLACEMENT_AUDIO, new_song_path)
-        self.on_replace(new_song_path)
+        replacement_path = str(replacement_audio)
+        remember_directory(PathHistoryKey.REPLACEMENT_AUDIO, replacement_path)
+        self.on_replace(replacement_path)

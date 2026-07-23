@@ -15,6 +15,7 @@ from pydub import AudioSegment
 
 from audio_utils import replace_special_audio, update_song_duration
 from core.audio_history import capture_audio_state, discard_audio_snapshot
+from core.audio_input import validate_replacement_audio
 from core.rpf import RPFParser
 
 ProgressCallback = Callable[[int], None]
@@ -131,9 +132,7 @@ def _validated_mappings(
             raise ValueError(f"Duplicate target track in batch: {song_name}")
         seen_targets.add(identity)
 
-        audio_path = Path(raw_audio_path).expanduser().resolve()
-        if not audio_path.is_file():
-            raise FileNotFoundError(f"Replacement audio not found: {audio_path}")
+        audio_path = validate_replacement_audio(raw_audio_path)
         prepared.append((song_name, audio_path))
 
     if not prepared:

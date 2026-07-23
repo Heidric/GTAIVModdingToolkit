@@ -16,11 +16,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.audio_input import AUDIO_FILE_FILTER
 from ui.path_dialogs import PathHistoryKey, select_open_files
 from ui.styles import BUTTON_STYLE
-
-
-_AUDIO_FILTER = "Audio Files (*.mp3 *.wav *.ogg *.flac *.aac *.m4a)"
 
 
 def _normalized_name(value: str) -> str:
@@ -112,7 +110,7 @@ class BatchReplacePage(QWidget):
             self,
             "Select Replacement Audio Files",
             PathHistoryKey.BATCH_REPLACEMENT_AUDIO,
-            file_filter=_AUDIO_FILTER,
+            file_filter=AUDIO_FILE_FILTER,
         )
         if not files:
             return

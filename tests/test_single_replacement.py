@@ -106,6 +106,26 @@ def test_direct_single_replacement_stages_verifies_and_creates_backups(tmp_path)
     assert_no_transaction_files(root)
 
 
+def test_unsupported_audio_is_rejected_before_staging(tmp_path):
+    root, rpf, dat15, _ = make_game(tmp_path)
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"not audio")
+
+    with pytest.raises(ValueError, match="Unsupported replacement audio format: TXT"):
+        replace_single_track_transactional(
+            root,
+            RADIO_FILE,
+            SONG_FILE,
+            replacement,
+            True,
+            **transaction_kwargs(),
+        )
+
+    assert rpf.read_bytes() == b"original-track"
+    assert dat15.read_bytes() == b"original-dat15"
+    assert_no_transaction_files(root)
+
+
 def test_fusionfix_first_install_keeps_originals_unchanged(tmp_path):
     root, original_rpf, original_dat15, replacement = make_game(tmp_path)
 

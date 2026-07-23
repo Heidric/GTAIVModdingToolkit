@@ -15,6 +15,7 @@ from pydub import AudioSegment
 
 from audio_utils import replace_special_audio, update_song_duration
 from core.audio_history import capture_audio_state, discard_audio_snapshot
+from core.audio_input import validate_replacement_audio
 from core.rpf import RPFParser
 
 ProgressCallback = Callable[[int], None]
@@ -134,14 +135,11 @@ def replace_single_track_transactional(
     """Stage, verify, and atomically commit one RPF and ``sounds.dat15`` change."""
 
     root = Path(gtaiv_path).expanduser().resolve()
-    replacement_audio = Path(new_song_path).expanduser().resolve()
+    replacement_audio = validate_replacement_audio(new_song_path)
     if not selected_radio.casefold().endswith(".rpf"):
         raise ValueError("selected_radio must name an RPF file")
     if not selected_song.strip():
         raise ValueError("selected_song must not be empty")
-    if not replacement_audio.is_file():
-        raise FileNotFoundError(f"Replacement audio not found: {replacement_audio}")
-
     exe_path = root / "GTAIV.exe"
     if not exe_path.is_file():
         raise FileNotFoundError(f"GTAIV.exe not found: {exe_path}")

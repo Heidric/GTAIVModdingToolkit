@@ -183,6 +183,30 @@ def test_cancellation_after_verification_leaves_no_override_or_history(
     assert not list(root.rglob(".gtaiv_toolkit_batch_*"))
 
 
+def test_unsupported_audio_is_rejected_before_staging(tmp_path, monkeypatch):
+    root, radio_file, _, _ = _make_game(tmp_path)
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"not audio")
+    captures = []
+    monkeypatch.setattr(
+        batch_replacement,
+        "capture_audio_state",
+        lambda *args, **kwargs: captures.append((args, kwargs)) or object(),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported replacement audio format: TXT"):
+        replace_batch_transactional(
+            root,
+            radio_file,
+            (("track_1.wav", replacement),),
+            False,
+            **_dependencies(),
+        )
+
+    assert captures == []
+    assert not list(root.rglob(".gtaiv_toolkit_batch_*"))
+
+
 def test_duplicate_target_is_rejected_before_staging(tmp_path, monkeypatch):
     root, radio_file, _, _ = _make_game(tmp_path)
     first = tmp_path / "first.mp3"

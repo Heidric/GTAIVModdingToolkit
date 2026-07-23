@@ -39,14 +39,11 @@ Implemented features:
 
 ### Input formats
 
-The single-track picker accepts:
+The single-track and batch pickers accept:
 
 - MP3
 - WAV
 - OGG
-
-The batch picker additionally exposes:
-
 - FLAC
 - AAC
 - M4A
@@ -202,7 +199,7 @@ Use `--packaged-only` to check application resources and dependencies without re
 2. Select FusionFix or direct replacement mode.
 3. Select a radio station.
 4. Select an existing track slot.
-5. Select an MP3, WAV, or OGG replacement.
+5. Select an MP3, WAV, OGG, FLAC, AAC, or M4A replacement.
 6. Wait for staging, conversion, byte verification, and commit to complete.
 7. Test the modified station in game.
 
