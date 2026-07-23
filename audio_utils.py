@@ -3,6 +3,7 @@ import subprocess
 import json
 import tempfile
 import shutil
+import math
 from pydub import AudioSegment
 from utils import resource_path, check_ffmpeg
 
@@ -70,49 +71,56 @@ def get_sounds_dat15_data(gtaiv_dir, dat15_path=None):
             return {}
 
 def update_song_duration(gtaiv_dir, radio, song, new_length, dat15_path=None):
-    """Updates song duration in sounds.dat15."""
+    """Update and verify one song duration in sounds.dat15."""
+    if new_length <= 0:
+        raise ValueError("Song duration must be positive.")
+
     if dat15_path:
         dat15_file = dat15_path
     else:
         dat15_file = os.path.join(gtaiv_dir, "pc", "audio", "config", "sounds.dat15")
-        
+
     if not os.path.exists(dat15_file):
         raise FileNotFoundError(f"{dat15_file} not found")
-        
+
     with tempfile.TemporaryDirectory() as temp_dir:
         json_path = convert_dat15_to_json(dat15_file, temp_dir)
-        
-        with open(json_path, "r") as f:
+
+        with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            
+
         entry_name = f"{radio.upper()}_{song.upper()}"
-        if entry_name in data:
-            data[entry_name]["Metadata"]["__field00"] = new_length
-            print(f"Updated {entry_name} duration to {new_length}")
-        else:
-            print(f"Warning: {entry_name} not found in metadata")
-            
-        with open(json_path, "w") as f:
+        entry = data.get(entry_name)
+        if not isinstance(entry, dict):
+            raise KeyError(f"{entry_name} not found in sounds.dat15 metadata")
+
+        metadata = entry.get("Metadata")
+        if not isinstance(metadata, dict) or "__field00" not in metadata:
+            raise KeyError(
+                f"{entry_name} does not contain the expected duration metadata"
+            )
+
+        metadata["__field00"] = new_length
+        print(f"Updated {entry_name} duration to {new_length}")
+
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
-            
-        # Create backup
+
         backup_file = f"{dat15_file}_backup"
         if os.path.exists(backup_file):
-             os.remove(backup_file)
-        if os.path.exists(dat15_file):
-             shutil.copy2(dat15_file, backup_file)
-             
+            os.remove(backup_file)
+        shutil.copy2(dat15_file, backup_file)
+
         convert_json_to_dat15(json_path, dat15_file)
-        
-        try:
-            check_data = get_sounds_dat15_data(None, dat15_file)
-            check_len = get_song_duration(check_data, radio, song)
-            if check_len != new_length:
-                print(f"Warning: Duration update verification failed! Expected {new_length}, got {check_len}")
-            else:
-                print("Duration update verified successfully.")
-        except Exception as e:
-            print(f"Verification failed with error: {e}")
+
+        check_data = get_sounds_dat15_data(None, dat15_file)
+        check_len = get_song_duration(check_data, radio, song)
+        if check_len != new_length:
+            raise RuntimeError(
+                "Duration update verification failed: "
+                f"expected {new_length}, got {check_len} for {entry_name}"
+            )
+        print("Duration update verified successfully.")
 
 def get_song_duration(data, radio, song):
     entry_name = f"{radio.upper()}_{song.upper()}"
@@ -135,8 +143,12 @@ def process_audio(track_name, new_audio_file):
         # Target -8.0 dBFS RMS
         target_rms = -8.0
         current_rms = audio.dBFS
+        if not math.isfinite(current_rms):
+            raise ValueError(
+                "Replacement audio is silent and cannot be normalized."
+            )
         gain_db = target_rms - current_rms
-        
+
         print(f"Audio RMS: {current_rms:.2f} dBFS. Applying gain: {gain_db:.2f} dB")
 
         print(f"Generating WAV for {track_name}...")
@@ -170,20 +182,19 @@ def process_audio(track_name, new_audio_file):
         print(f"WAV file generated: {output_wav}")
         return output_wav
     except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode('utf-8', errors='ignore')
+        if isinstance(e.stderr, bytes):
+            error_msg = e.stderr.decode("utf-8", errors="ignore")
+        else:
+            error_msg = str(e.stderr or "").strip()
         print(f"FFmpeg error: {error_msg}")
-        raise RuntimeError(f"FFmpeg conversion failed: {error_msg}")
-    except Exception as e:
-        if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
-            raise RuntimeError("FFmpeg is required for audio processing. Please install FFmpeg to continue.") from e
-        raise
+        raise RuntimeError(f"FFmpeg conversion failed: {error_msg}") from e
     except Exception as e:
         if "Couldn't find ffmpeg" in str(e) or "ffprobe" in str(e):
             raise RuntimeError(
                 "FFmpeg is required for audio processing. "
-                f"Diagnostic files preserved at: {diagnostic_dir}"
+                "Please install FFmpeg to continue."
             ) from e
-        raise RuntimeError(diagnostic_message) from e
+        raise
 
 def modify_oaf_file(oaf_file, track_name, new_audio_duration):
     """Update only metadata that is safe for the extracted OAF layout."""
@@ -314,4 +325,4 @@ def replace_special_audio(original_audio, new_audio_file):
         diagnostic_message = f"{e}\nDiagnostic files preserved at: {diagnostic_dir}"
         print(diagnostic_message)
 
-        raise
+        raise RuntimeError(diagnostic_message) from e
