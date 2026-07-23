@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTemporaryDir, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QTemporaryDir
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,22 +35,24 @@ from core.radio_logo.installer import (
     RadioLogoRecoveryAction,
     RadioLogoTarget,
     get_radio_logo_destination_dir,
-    install_radio_logo_pack,
     plan_radio_logo_recovery,
-    restore_previous_radio_logo_pack,
 )
 from core.radio_logo.station_pack import (
     create_station_logo_plan,
     list_station_logo_bases,
     prepare_station_logo_previews,
 )
-from core.radio_logo.workflow import install_station_logo_from_image
 from ui.path_dialogs import (
     PathHistoryKey,
     select_open_file,
     select_open_files,
 )
 from ui.styles import BUTTON_STYLE
+from ui.workers.radio_logo import (
+    PreparedPackInstallWorker,
+    RadioLogoRecoveryWorker,
+    StationLogoInstallWorker,
+)
 
 
 _TARGET_LABELS = (
@@ -86,97 +88,6 @@ _STATION_LABELS = {
 }
 
 _PREVIEW_SIZE = QSize(300, 150)
-
-
-class StationLogoInstallWorker(QThread):
-    completed = Signal(object)
-    error = Signal(str)
-
-    def __init__(
-        self,
-        gtaiv_path,
-        target,
-        station_base,
-        source_image,
-        use_direct,
-        fit_mode,
-        padding_ratio,
-    ):
-        super().__init__()
-        self.gtaiv_path = gtaiv_path
-        self.target = target
-        self.station_base = station_base
-        self.source_image = source_image
-        self.use_direct = use_direct
-        self.fit_mode = fit_mode
-        self.padding_ratio = padding_ratio
-
-    def run(self):
-        try:
-            result = install_station_logo_from_image(
-                self.gtaiv_path,
-                self.target,
-                self.station_base,
-                self.source_image,
-                use_direct=self.use_direct,
-                fit_mode=self.fit_mode,
-                padding_ratio=self.padding_ratio,
-            )
-        except Exception as exc:
-            self.error.emit(str(exc))
-            return
-
-        self.completed.emit(result)
-
-
-class PreparedPackInstallWorker(QThread):
-    completed = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, gtaiv_path, source_files, target, use_direct):
-        super().__init__()
-        self.gtaiv_path = gtaiv_path
-        self.source_files = list(source_files)
-        self.target = target
-        self.use_direct = use_direct
-
-    def run(self):
-        try:
-            result = install_radio_logo_pack(
-                self.gtaiv_path,
-                self.source_files,
-                self.target,
-                use_direct=self.use_direct,
-            )
-        except Exception as exc:
-            self.error.emit(str(exc))
-            return
-
-        self.completed.emit(result)
-
-
-class RadioLogoRecoveryWorker(QThread):
-    completed = Signal(object)
-    error = Signal(str)
-
-    def __init__(self, gtaiv_path, target, use_direct):
-        super().__init__()
-        self.gtaiv_path = gtaiv_path
-        self.target = target
-        self.use_direct = use_direct
-
-    def run(self):
-        try:
-            result = restore_previous_radio_logo_pack(
-                self.gtaiv_path,
-                self.target,
-                use_direct=self.use_direct,
-            )
-        except Exception as exc:
-            self.error.emit(str(exc))
-            return
-
-        self.completed.emit(result)
 
 
 class RadioLogoInstallPage(QWidget):
