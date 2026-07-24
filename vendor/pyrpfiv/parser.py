@@ -128,9 +128,10 @@ class RPFParser:
             self.build_file_list()
 
     def build_file_list(self):
-        """Build a complete list of files with their paths"""
+        """Build complete file paths by traversing the RPF directory table."""
         directories = [entry for entry in self.entries if entry['type'] == 'directory']
 
+        self.paths = []
         if not directories:
             print("No directories found!")
             return
@@ -142,21 +143,62 @@ class RPFParser:
                 f"Content Index: {dir_entry['content_index']}, "
                 f"Count: {dir_entry['content_count']}")
 
-        self.paths = []
+        root = self.entries[0] if self.entries[0]['type'] == 'directory' else directories[0]
+        active_directories = set()
+        visited_directories = set()
 
-        content_dir = next((dir for dir in directories if dir['index'] == 1), directories[0])
-        print(f"\nProcessing directory: {content_dir['name']}")
+        def walk(directory, parent_path):
+            directory_index = directory['index']
+            if directory_index in active_directories:
+                raise InvalidTOCEntryError(
+                    f"Directory cycle detected at TOC entry {directory_index}"
+                )
+            if directory_index in visited_directories:
+                raise InvalidTOCEntryError(
+                    f"Directory TOC entry {directory_index} is referenced more than once"
+                )
 
-        dir_files = [entry for entry in self.entries if entry['type'] == 'file']
+            content_index = directory['content_index']
+            content_count = directory['content_count']
+            content_end = content_index + content_count
+            if (
+                content_index < 0
+                or content_count < 0
+                or content_end > len(self.entries)
+            ):
+                raise InvalidTOCEntryError(
+                    f"Directory TOC entry {directory_index} references invalid child range "
+                    f"[{content_index}, {content_end})"
+                )
 
-        for entry in dir_files:
-            path = f"{content_dir['name']}/{entry['name']}"
-            self.paths.append({
-                'path': path,
-                'size': entry['size'],
-                'offset': entry['offset']
-            })
-            print(f"Added file: {path}")
+            active_directories.add(directory_index)
+            visited_directories.add(directory_index)
+            try:
+                for child in self.entries[content_index:content_end]:
+                    child_path = (
+                        f"{parent_path}/{child['name']}"
+                        if parent_path
+                        else child['name']
+                    )
+                    if child['type'] == 'directory':
+                        walk(child, child_path)
+                    elif child['type'] == 'file':
+                        self.paths.append({
+                            'path': child_path,
+                            'size': child['size'],
+                            'offset': child['offset'],
+                        })
+                        print(f"Added file: {child_path}")
+                    else:
+                        raise InvalidTOCEntryError(
+                            f"Unsupported TOC entry type at index {child['index']}: "
+                            f"{child['type']!r}"
+                        )
+            finally:
+                active_directories.remove(directory_index)
+
+        print(f"\nProcessing root directory: {root['name']}")
+        walk(root, "")
 
     def get_json_output(self, directories_=None):
         """Returns the RPF data in JSON format"""
@@ -200,11 +242,46 @@ class RPFParser:
             json.dump(json_data, f, indent=2)
         print(f"JSON data saved to {output_file}")
 
-    def extract_file(self, file_path, output_dir):
-        """Extract a specific file from the RPF archive."""
-        file_entry = next((entry for entry in self.paths if entry['path'] == file_path), None)
+    def _get_file_entry(self, file_path):
+        file_entry = next(
+            (entry for entry in self.paths if entry['path'] == file_path),
+            None,
+        )
         if not file_entry:
             raise FileNotFoundInRPFError(f"File not found in RPF archive: {file_path}")
+        return file_entry
+
+    def read_file(self, file_path):
+        """Return the exact stored bytes for one RPF file entry."""
+        file_entry = self._get_file_entry(file_path)
+        offset = file_entry['offset']
+        size = file_entry['size']
+        if offset < 0 or size < 0:
+            raise FileExtractionError(
+                f"Invalid byte range for {file_path}: offset={offset}, size={size}"
+            )
+
+        with open(self.rpf_filename, 'rb') as rpf:
+            rpf.seek(0, os.SEEK_END)
+            total_size = rpf.tell()
+            if offset + size > total_size:
+                raise FileExtractionError(
+                    f"File entry {file_path} exceeds the RPF archive bounds: "
+                    f"offset={offset}, size={size}, archive_size={total_size}"
+                )
+            rpf.seek(offset)
+            data = rpf.read(size)
+
+        if len(data) != size:
+            raise FileExtractionError(
+                f"Could not read the complete RPF entry {file_path}: "
+                f"expected {size} bytes, read {len(data)}"
+            )
+        return data
+
+    def extract_file(self, file_path, output_dir):
+        """Extract a specific file from the RPF archive."""
+        file_entry = self._get_file_entry(file_path)
 
         print(f"\nExtracting file:")
         print(f"Path: {file_path}")
@@ -212,38 +289,19 @@ class RPFParser:
         print(f"Offset: 0x{file_entry['offset']:X}")
 
         os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, os.path.basename(file_path))
+        data = self.read_file(file_path)
+        with open(output_path, 'wb') as out_file:
+            out_file.write(data)
 
-        with open(self.rpf_filename, 'rb') as rpf:
-            rpf.seek(0, 2)
-            total_size = rpf.tell()
-            print(f"Total RPF file size: 0x{total_size:X} bytes")
-            rpf.seek(0)
-
-            print(f"Current file position before seek: 0x{rpf.tell():X}")
-
-            rpf.seek(file_entry['offset'])
-
-            print(f"Position after seek: 0x{rpf.tell():X}")
-
-            data = rpf.read(file_entry['size'])
-
-            print(f"Bytes read: {len(data)}")
-
-            output_path = os.path.join(output_dir, os.path.basename(file_path))
-            with open(output_path, 'wb') as out_file:
-                out_file.write(data)
-
-            final_size = os.path.getsize(output_path)
-            print(f"Final file size: {final_size} bytes")
-
+        final_size = os.path.getsize(output_path)
+        print(f"Final file size: {final_size} bytes")
         print(f"Extracted: {file_path} -> {output_path}")
         return True
 
     def get_file_capacity(self, file_path):
         """Return the writable byte range at the file's current RPF offset."""
-        file_entry = next((entry for entry in self.paths if entry['path'] == file_path), None)
-        if not file_entry:
-            raise FileNotFoundInRPFError(f"File not found in RPF archive: {file_path}")
+        file_entry = self._get_file_entry(file_path)
 
         later_offsets = [
             entry['offset']
