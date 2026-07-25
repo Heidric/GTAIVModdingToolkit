@@ -117,11 +117,11 @@ def _read_owner(path: Path) -> InstallationLockOwner | None:
 def _busy_message(path: Path, owner: InstallationLockOwner | None) -> str:
     if owner is None:
         return (
-            "Another GTA IV Modding Toolkit process is already modifying audio files "
+            "Another GTA IV Modding Toolkit process is already modifying files "
             f"for this installation. Lock: {path}"
         )
     return (
-        "Another GTA IV Modding Toolkit process is already modifying audio files "
+        "Another GTA IV Modding Toolkit process is already modifying files "
         f"for this installation: {owner.operation} on {owner.hostname} "
         f"(PID {owner.pid}, since {owner.acquired_at_utc})."
     )
