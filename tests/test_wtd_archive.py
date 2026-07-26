@@ -5,15 +5,18 @@ import pytest
 from PIL import Image
 
 import core.wtd_archive as wtd_archive
+from core.radio_logo.payload_patcher import IndexedPayloadPatchResult
 from core.radio_logo.wtd import WTDArchive, WTDHeader, WTDParseError, WTDTexture
 from core.wtd_archive import (
     WTDArchiveSnapshot,
     WTDTextureEntry,
     WTDTextureNotFoundError,
     WTDTexturePreviewError,
+    WTDTextureReplacementError,
     export_wtd_texture,
     inspect_wtd_archive,
     render_wtd_texture_preview,
+    replace_wtd_texture_from_image,
 )
 
 
@@ -126,6 +129,7 @@ def test_inspect_wtd_archive_returns_payload_free_metadata(source):
                 mip_count=1,
                 data_size=16,
                 extractable=True,
+                replaceable=True,
             ),
             WTDTextureEntry(
                 index=1,
@@ -141,6 +145,7 @@ def test_inspect_wtd_archive_returns_payload_free_metadata(source):
                 mip_count=1,
                 data_size=None,
                 extractable=False,
+                replaceable=False,
             ),
             WTDTextureEntry(
                 index=2,
@@ -156,9 +161,36 @@ def test_inspect_wtd_archive_returns_payload_free_metadata(source):
                 mip_count=1,
                 data_size=16,
                 extractable=True,
+                replaceable=True,
             ),
         ),
     )
+
+
+def test_inspection_distinguishes_extractable_from_replaceable(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "textures.wtd"
+    path.write_bytes(b"synthetic")
+    archive = _archive(
+        path,
+        _texture(
+            index=0,
+            name="dxt3_texture",
+            format_code=0x33545844,
+            format_name="DXT3",
+            width=4,
+            height=4,
+            data=b"X" * 16,
+        ),
+    )
+    monkeypatch.setattr(wtd_archive, "read_wtd", lambda candidate: archive)
+
+    texture = inspect_wtd_archive(path).texture(0)
+
+    assert texture.extractable is True
+    assert texture.replaceable is False
 
 
 def test_snapshot_lookup_uses_stable_index_and_allows_duplicate_names(source):
@@ -170,6 +202,8 @@ def test_snapshot_lookup_uses_stable_index_and_allows_duplicate_names(source):
 
     with pytest.raises(WTDTextureNotFoundError):
         snapshot.texture(99)
+    with pytest.raises(TypeError, match="index must be an integer"):
+        snapshot.texture(True)
 
 
 def test_export_wtd_texture_writes_selected_dds(source, tmp_path):
@@ -248,3 +282,85 @@ def test_operations_reject_missing_wtd(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         inspect_wtd_archive(missing)
+
+
+def test_replace_wtd_texture_from_image_uses_stable_index(source, tmp_path, monkeypatch):
+    path, archive = source
+    image = tmp_path / "replacement.png"
+    image.write_bytes(b"image")
+    destination = tmp_path / "patched.wtd"
+    captured = {}
+
+    def fake_replace(source_path, output_path, texture_index, image_path, **kwargs):
+        captured.update(
+            source=Path(source_path),
+            output=Path(output_path),
+            texture_index=texture_index,
+            image=Path(image_path),
+            kwargs=kwargs,
+        )
+        destination.write_bytes(b"patched")
+        return IndexedPayloadPatchResult(
+            source_path=path.resolve(),
+            output_path=destination.resolve(),
+            texture_index=texture_index,
+            texture_name=archive.textures[texture_index].name,
+            texture_count=len(archive.textures),
+            output_size=destination.stat().st_size,
+            output_sha256="output-sha256",
+            virtual_sha256="virtual-sha256",
+        )
+
+    monkeypatch.setattr(
+        wtd_archive,
+        "replace_texture_payload_by_index_from_image",
+        fake_replace,
+    )
+
+    result = replace_wtd_texture_from_image(
+        path,
+        2,
+        image,
+        destination,
+        quality=0.75,
+    )
+
+    assert captured["texture_index"] == 2
+    assert captured["source"] == path.resolve()
+    assert captured["output"] == destination.resolve()
+    assert captured["image"] == image.resolve()
+    assert captured["kwargs"] == {"quality": 0.75, "overwrite": False}
+    assert result.texture.index == 2
+    assert result.texture.name == "HUD_ICON"
+    assert result.replacement_image_path == image.resolve()
+    assert result.output_path == destination.resolve()
+    assert result.output_sha256 == "output-sha256"
+
+
+def test_replace_wtd_texture_from_image_rejects_unsupported_format(
+    source,
+    tmp_path,
+):
+    path, _archive_value = source
+    image = tmp_path / "replacement.png"
+    image.write_bytes(b"image")
+
+    with pytest.raises(WTDTextureReplacementError, match="cannot be replaced"):
+        replace_wtd_texture_from_image(
+            path,
+            1,
+            image,
+            tmp_path / "patched.wtd",
+        )
+
+
+def test_replace_wtd_texture_from_image_rejects_missing_image(source, tmp_path):
+    path, _archive_value = source
+
+    with pytest.raises(FileNotFoundError, match="replacement image"):
+        replace_wtd_texture_from_image(
+            path,
+            0,
+            tmp_path / "missing.png",
+            tmp_path / "patched.wtd",
+        )

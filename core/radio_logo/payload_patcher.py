@@ -30,6 +30,7 @@ _FORMAT_TO_TEXFURY = {
     "DXT5": "BC3",
     "A8R8G8B8": "A8R8G8B8",
 }
+SUPPORTED_TEXTURE_REPLACEMENT_FORMATS = frozenset(_FORMAT_TO_TEXFURY)
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,20 @@ class PayloadPatchResult:
     output_sha256: str
     virtual_sha256: str
     comparison: DictionaryComparison
+
+
+@dataclass(frozen=True)
+class IndexedPayloadPatchResult:
+    """Result of surgically replacing one texture selected by table index."""
+
+    source_path: Path
+    output_path: Path
+    texture_index: int
+    texture_name: str
+    texture_count: int
+    output_size: int
+    output_sha256: str
+    virtual_sha256: str
 
 
 @dataclass(frozen=True)
@@ -226,6 +241,40 @@ def _find_target_textures(
     return targets
 
 
+def _find_target_texture_by_index(
+    archive: WTDArchive,
+    texture_index: int,
+) -> WTDTexture:
+    if isinstance(texture_index, bool) or not isinstance(texture_index, int):
+        raise TypeError("texture index must be an integer")
+    if texture_index < 0:
+        raise ValueError("texture index must not be negative")
+
+    target = next(
+        (texture for texture in archive.textures if texture.index == texture_index),
+        None,
+    )
+    if target is None:
+        available = ", ".join(str(texture.index) for texture in archive.textures)
+        raise KeyError(
+            f"texture index {texture_index} is not present in {archive.path.name}; "
+            f"available: {available}"
+        )
+    if target.data_offset is None or target.data_size is None or target.data is None:
+        raise TextureDictionaryError(
+            f"texture {target.name!r} at index {target.index} has no extractable "
+            "physical payload"
+        )
+    if target.format_name not in SUPPORTED_TEXTURE_REPLACEMENT_FORMATS:
+        supported = ", ".join(sorted(SUPPORTED_TEXTURE_REPLACEMENT_FORMATS))
+        raise TextureDictionaryError(
+            f"cannot encode replacement for {target.name!r} at index "
+            f"{target.index} in {target.format_name}; supported formats are "
+            f"{supported}"
+        )
+    return target
+
+
 def _mip_min_size(width: int, height: int, mip_count: int) -> int:
     if mip_count <= 1:
         return max(width, height)
@@ -405,6 +454,137 @@ def replace_texture_payloads_from_images(
             output_sha256=_sha256_file(output_path),
             virtual_sha256=_sha256_bytes(original.virtual),
             comparison=comparison,
+        )
+    finally:
+        stage_path.unlink(missing_ok=True)
+
+
+def _texture_metadata(texture: WTDTexture) -> tuple[object, ...]:
+    return (
+        texture.index,
+        texture.hash,
+        texture.name,
+        texture.raw_name,
+        texture.width,
+        texture.height,
+        texture.format_code,
+        texture.format_name,
+        texture.stride,
+        texture.texture_type,
+        texture.mip_count,
+        texture.data_offset,
+        texture.data_size,
+    )
+
+
+def _validate_indexed_candidate(
+    original: WTDArchive,
+    candidate: WTDArchive,
+    target_index: int,
+    expected_payload: bytes,
+) -> None:
+    if len(candidate.textures) != len(original.textures):
+        raise TextureDictionaryValidationError(
+            "surgically patched WTD changed the texture count"
+        )
+
+    for previous, current in zip(original.textures, candidate.textures):
+        if _texture_metadata(current) != _texture_metadata(previous):
+            raise TextureDictionaryValidationError(
+                "surgically patched WTD changed texture metadata at index "
+                f"{previous.index}"
+            )
+        expected = expected_payload if previous.index == target_index else previous.data
+        if current.data != expected:
+            change_kind = (
+                "replacement payload does not match encoded bytes"
+                if previous.index == target_index
+                else "unrelated texture payload changed"
+            )
+            raise TextureDictionaryValidationError(
+                f"{change_kind} at texture index {previous.index}"
+            )
+
+
+def replace_texture_payload_by_index_from_image(
+    source: str | os.PathLike[str],
+    output: str | os.PathLike[str],
+    texture_index: int,
+    image: str | os.PathLike[str],
+    *,
+    quality: float = 0.9,
+    overwrite: bool = False,
+) -> IndexedPayloadPatchResult:
+    """Replace one fixed-size texture payload selected by stable table index."""
+
+    if not 0.0 <= quality <= 1.0:
+        raise ValueError("quality must be between 0.0 and 1.0")
+
+    source_path, output_path = _normalise_paths(
+        source,
+        output,
+        overwrite=overwrite,
+    )
+    image_path = Path(image).expanduser().resolve()
+    if not image_path.is_file():
+        raise FileNotFoundError(image_path)
+
+    archive = read_wtd(source_path)
+    target = _find_target_texture_by_index(archive, texture_index)
+    original = _read_resource_sections(source_path)
+    texfury = _load_texfury_encoder()
+    replacement_payload = _encode_payload(
+        target,
+        image_path,
+        quality=quality,
+        texfury=texfury,
+    )
+
+    assert target.data_offset is not None and target.data_size is not None
+    start = target.data_offset
+    end = start + target.data_size
+    patched_physical = bytearray(original.physical)
+    patched_physical[start:end] = replacement_payload
+    resource = original.virtual + bytes(patched_physical)
+    staged_data = original.header + zlib.compress(resource, level=9)
+    stage_path = _write_stage(output_path, staged_data)
+
+    try:
+        staged = _read_resource_sections(stage_path)
+        if staged.header != original.header:
+            raise TextureDictionaryValidationError(
+                "RSC5 header changed during physical payload patching"
+            )
+        if staged.virtual != original.virtual:
+            raise TextureDictionaryValidationError(
+                "RSC5 virtual metadata changed during physical payload patching"
+            )
+        if not _physical_bytes_unchanged_outside_ranges(
+            original.physical,
+            staged.physical,
+            [(start, end)],
+        ):
+            raise TextureDictionaryValidationError(
+                "physical bytes outside the replacement payload changed"
+            )
+
+        _validate_indexed_candidate(
+            archive,
+            read_wtd(stage_path),
+            target.index,
+            replacement_payload,
+        )
+
+        os.replace(stage_path, output_path)
+        return IndexedPayloadPatchResult(
+            source_path=source_path,
+            output_path=output_path,
+            texture_index=target.index,
+            texture_name=target.name,
+            texture_count=len(archive.textures),
+            output_size=output_path.stat().st_size,
+            output_sha256=_sha256_file(output_path),
+            virtual_sha256=_sha256_bytes(original.virtual),
         )
     finally:
         stage_path.unlink(missing_ok=True)

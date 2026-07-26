@@ -12,6 +12,7 @@ import core.radio_logo.payload_patcher as payload_patcher
 from core.radio_logo.payload_patcher import (
     TextureDictionaryError,
     TextureDictionaryValidationError,
+    replace_texture_payload_by_index_from_image,
     replace_texture_payload_from_image,
     replace_texture_payloads_from_images,
 )
@@ -376,4 +377,62 @@ def test_patch_rejects_invalid_quality(tmp_path):
             tmp_path / "output.wtd",
             {"beat_col": tmp_path / "missing.png"},
             quality=1.1,
+        )
+
+
+def test_index_payload_patch_supports_duplicate_texture_names(monkeypatch, tmp_path):
+    source = build_wtd(
+        tmp_path / "source.wtd",
+        [
+            {"name": "duplicate", "payload": b"A" * 8},
+            {"name": "duplicate", "payload": b"B" * 8},
+        ],
+    )
+    image = write_image(tmp_path / "replacement.png")
+    output = tmp_path / "output.wtd"
+    install_fake_encoder(monkeypatch, {"replacement.png": b"N" * 8})
+
+    result = replace_texture_payload_by_index_from_image(
+        source,
+        output,
+        1,
+        image,
+    )
+
+    source_header, source_virtual, _source_physical = sections(source)
+    output_header, output_virtual, _output_physical = sections(output)
+    textures = read_wtd(output).textures
+
+    assert output_header == source_header
+    assert output_virtual == source_virtual
+    assert textures[0].data == b"A" * 8
+    assert textures[1].data == b"N" * 8
+    assert result.texture_index == 1
+    assert result.texture_name == "duplicate"
+
+
+def test_index_payload_patch_reports_missing_index(monkeypatch, tmp_path):
+    source = build_wtd(tmp_path / "source.wtd", [{"name": "only"}])
+    image = write_image(tmp_path / "replacement.png")
+    install_fake_encoder(monkeypatch, {"replacement.png": b"N" * 8})
+
+    with pytest.raises(KeyError, match="index 5"):
+        replace_texture_payload_by_index_from_image(
+            source,
+            tmp_path / "output.wtd",
+            5,
+            image,
+        )
+
+
+def test_index_payload_patch_rejects_non_integer_index(tmp_path):
+    source = build_wtd(tmp_path / "source.wtd", [{"name": "only"}])
+    image = write_image(tmp_path / "replacement.png")
+
+    with pytest.raises(TypeError, match="index must be an integer"):
+        replace_texture_payload_by_index_from_image(
+            source,
+            tmp_path / "output.wtd",
+            True,
+            image,
         )

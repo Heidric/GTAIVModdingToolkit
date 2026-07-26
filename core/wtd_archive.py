@@ -10,6 +10,11 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from core.radio_logo.payload_patcher import (
+    SUPPORTED_TEXTURE_REPLACEMENT_FORMATS,
+    IndexedPayloadPatchResult,
+    replace_texture_payload_by_index_from_image,
+)
 from core.radio_logo.wtd import (
     WTDArchive,
     WTDParseError,
@@ -25,6 +30,10 @@ class WTDTextureNotFoundError(LookupError):
 
 class WTDTexturePreviewError(RuntimeError):
     """Raised when an extractable texture cannot be decoded for preview."""
+
+
+class WTDTextureReplacementError(RuntimeError):
+    """Raised when a texture cannot be replaced through surgical patching."""
 
 
 @dataclass(frozen=True)
@@ -44,6 +53,7 @@ class WTDTextureEntry:
     mip_count: int
     data_size: int | None
     extractable: bool
+    replaceable: bool
 
 
 @dataclass(frozen=True)
@@ -58,7 +68,7 @@ class WTDArchiveSnapshot:
     textures: tuple[WTDTextureEntry, ...]
 
     def texture(self, index: int) -> WTDTextureEntry:
-        if not isinstance(index, int):
+        if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError("texture index must be an integer")
         for texture in self.textures:
             if texture.index == index:
@@ -76,6 +86,19 @@ class WTDArchiveSnapshot:
             for texture in self.textures
             if texture.name.casefold() == normalized
         )
+
+
+@dataclass(frozen=True)
+class WTDTextureReplacementResult:
+    """Metadata for one validated WTD texture replacement output."""
+
+    source_path: Path
+    output_path: Path
+    replacement_image_path: Path
+    texture: WTDTextureEntry
+    output_size: int
+    output_sha256: str
+    virtual_sha256: str
 
 
 @dataclass(frozen=True)
@@ -110,6 +133,10 @@ def _entry_from_texture(texture: WTDTexture) -> WTDTextureEntry:
         mip_count=texture.mip_count,
         data_size=texture.data_size,
         extractable=texture.extractable,
+        replaceable=(
+            texture.extractable
+            and texture.format_name in SUPPORTED_TEXTURE_REPLACEMENT_FORMATS
+        ),
     )
 
 
@@ -125,7 +152,7 @@ def _snapshot_from_archive(archive: WTDArchive) -> WTDArchiveSnapshot:
 
 
 def _select_texture(archive: WTDArchive, index: int) -> WTDTexture:
-    if not isinstance(index, int):
+    if isinstance(index, bool) or not isinstance(index, int):
         raise TypeError("texture index must be an integer")
     for texture in archive.textures:
         if texture.index == index:
@@ -195,6 +222,57 @@ def export_wtd_texture(
     if result.stat().st_size != len(payload):
         raise OSError(f"Exported DDS size verification failed: {result}")
     return result
+
+
+def replace_wtd_texture_from_image(
+    path: str | os.PathLike[str],
+    texture_index: int,
+    image_path: str | os.PathLike[str],
+    destination_path: str | os.PathLike[str],
+    *,
+    quality: float = 0.9,
+    overwrite: bool = False,
+) -> WTDTextureReplacementResult:
+    """Create a surgically patched WTD with one texture replaced by an image."""
+    source = _validated_wtd_path(path)
+    image = Path(image_path).expanduser().resolve()
+    if not image.is_file():
+        raise FileNotFoundError(f"Texture replacement image not found: {image}")
+
+    archive = read_wtd(source)
+    texture = _select_texture(archive, texture_index)
+    entry = _entry_from_texture(texture)
+    if not entry.replaceable:
+        supported = ", ".join(sorted(SUPPORTED_TEXTURE_REPLACEMENT_FORMATS))
+        raise WTDTextureReplacementError(
+            f"Texture {texture.name!r} at index {texture.index} uses "
+            f"{texture.format_name}, which cannot be replaced; supported formats "
+            f"are {supported}"
+        )
+
+    destination = Path(destination_path).expanduser().resolve()
+    result: IndexedPayloadPatchResult = replace_texture_payload_by_index_from_image(
+        source,
+        destination,
+        texture.index,
+        image,
+        quality=quality,
+        overwrite=overwrite,
+    )
+    if result.texture_index != texture.index:
+        raise WTDTextureReplacementError(
+            "Surgical WTD replacement returned an unexpected texture index"
+        )
+
+    return WTDTextureReplacementResult(
+        source_path=result.source_path,
+        output_path=result.output_path,
+        replacement_image_path=image,
+        texture=entry,
+        output_size=result.output_size,
+        output_sha256=result.output_sha256,
+        virtual_sha256=result.virtual_sha256,
+    )
 
 
 def render_wtd_texture_preview(
