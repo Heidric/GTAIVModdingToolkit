@@ -339,6 +339,125 @@ def _restore_archive_backup(
         )
 
 
+def _replace_rpf_entry_transactional_locked(
+    archive: Path,
+    executable: Path,
+    normalized_entry: str,
+    replacement: Path,
+    *,
+    parser_factory: ParserFactory | None,
+    replace_file: ReplaceFile,
+) -> RPFReplacementResult:
+    """Replace one RPF entry while the caller holds the installation lock."""
+    staged_archive: Path | None = None
+    staged_replacement: Path | None = None
+    pending_backup: Path | None = None
+    backup_path: Path | None = None
+
+    original_parser = _open_parser(archive, executable, parser_factory)
+    original_snapshot = _snapshot_from_parser(archive, original_parser)
+    previous_entry = original_snapshot.entry(normalized_entry)
+    original_sha256 = _sha256_path(archive)
+
+    try:
+        staged_archive = _temporary_copy(
+            archive,
+            directory=archive.parent,
+            prefix=".gtaiv_toolkit_rpf_",
+            suffix=".staged.rpf",
+        )
+        staged_replacement = _temporary_copy(
+            replacement,
+            directory=archive.parent,
+            prefix=".gtaiv_toolkit_rpf_payload_",
+            suffix=replacement.suffix or ".bin",
+        )
+        expected_size = staged_replacement.stat().st_size
+        expected_sha256 = _sha256_path(staged_replacement)
+
+        staged_parser = _open_parser(
+            staged_archive,
+            executable,
+            parser_factory,
+        )
+        staged_parser.add_file(str(staged_replacement), normalized_entry)
+        staged_entry = _verify_replacement(
+            staged_archive,
+            executable,
+            parser_factory,
+            original_snapshot,
+            normalized_entry,
+            expected_size,
+            expected_sha256,
+        )
+
+        backup_path = _unique_backup_path(archive)
+        pending_backup = _temporary_copy(
+            archive,
+            directory=archive.parent,
+            prefix=".gtaiv_toolkit_rpf_backup_",
+            suffix=".tmp",
+        )
+        os.replace(pending_backup, backup_path)
+        pending_backup = None
+        if _sha256_path(backup_path) != original_sha256:
+            raise RuntimeError("RPF backup verification failed")
+
+        try:
+            replace_file(str(staged_archive), str(archive))
+            staged_archive = None
+            committed_entry = _verify_replacement(
+                archive,
+                executable,
+                parser_factory,
+                original_snapshot,
+                normalized_entry,
+                expected_size,
+                expected_sha256,
+            )
+            if committed_entry != staged_entry:
+                raise RuntimeError(
+                    "Committed RPF verification failed: entry metadata differs "
+                    "from the verified staged archive"
+                )
+        except Exception:
+            current_sha256 = _sha256_path(archive) if archive.is_file() else None
+            if current_sha256 != original_sha256:
+                _restore_archive_backup(
+                    backup_path,
+                    archive,
+                    original_sha256,
+                )
+            backup_path.unlink(missing_ok=True)
+            backup_path = None
+            raise
+
+        return RPFReplacementResult(
+            archive_path=archive,
+            backup_path=backup_path.resolve(),
+            entry_path=normalized_entry,
+            previous_size=previous_entry.size,
+            replacement_size=expected_size,
+            previous_offset=previous_entry.offset,
+            final_offset=committed_entry.offset,
+        )
+    except Exception:
+        if backup_path is not None:
+            current_sha256 = _sha256_path(archive) if archive.is_file() else None
+            if current_sha256 == original_sha256:
+                backup_path.unlink(missing_ok=True)
+                backup_path = None
+        raise
+    finally:
+        for temporary in (
+            staged_archive,
+            staged_replacement,
+            pending_backup,
+        ):
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
 def replace_rpf_entry_transactional(
     archive_path: str | os.PathLike[str],
     gtaiv_exe_path: str | os.PathLike[str],
@@ -353,121 +472,18 @@ def replace_rpf_entry_transactional(
     executable = _validated_executable_path(gtaiv_exe_path)
     replacement = _validated_replacement_path(replacement_path, archive)
     normalized_entry = normalize_entry_path(entry_path)
-    replace_file = os.replace if replace_file is None else replace_file
-
-    staged_archive: Path | None = None
-    staged_replacement: Path | None = None
-    pending_backup: Path | None = None
-    backup_path: Path | None = None
+    commit_file = os.replace if replace_file is None else replace_file
 
     with installation_lock(
         executable.parent,
         operation=f"RPF entry replacement in {archive.name}",
         scope="rpf",
     ):
-        original_parser = _open_parser(archive, executable, parser_factory)
-        original_snapshot = _snapshot_from_parser(archive, original_parser)
-        previous_entry = original_snapshot.entry(normalized_entry)
-        original_sha256 = _sha256_path(archive)
-
-        try:
-            staged_archive = _temporary_copy(
-                archive,
-                directory=archive.parent,
-                prefix=".gtaiv_toolkit_rpf_",
-                suffix=".staged.rpf",
-            )
-            staged_replacement = _temporary_copy(
-                replacement,
-                directory=archive.parent,
-                prefix=".gtaiv_toolkit_rpf_payload_",
-                suffix=replacement.suffix or ".bin",
-            )
-            expected_size = staged_replacement.stat().st_size
-            expected_sha256 = _sha256_path(staged_replacement)
-
-            staged_parser = _open_parser(
-                staged_archive,
-                executable,
-                parser_factory,
-            )
-            staged_parser.add_file(str(staged_replacement), normalized_entry)
-            staged_entry = _verify_replacement(
-                staged_archive,
-                executable,
-                parser_factory,
-                original_snapshot,
-                normalized_entry,
-                expected_size,
-                expected_sha256,
-            )
-
-            backup_path = _unique_backup_path(archive)
-            pending_backup = _temporary_copy(
-                archive,
-                directory=archive.parent,
-                prefix=".gtaiv_toolkit_rpf_backup_",
-                suffix=".tmp",
-            )
-            os.replace(pending_backup, backup_path)
-            pending_backup = None
-            if _sha256_path(backup_path) != original_sha256:
-                raise RuntimeError("RPF backup verification failed")
-
-            try:
-                replace_file(str(staged_archive), str(archive))
-                staged_archive = None
-                committed_entry = _verify_replacement(
-                    archive,
-                    executable,
-                    parser_factory,
-                    original_snapshot,
-                    normalized_entry,
-                    expected_size,
-                    expected_sha256,
-                )
-                if committed_entry != staged_entry:
-                    raise RuntimeError(
-                        "Committed RPF verification failed: entry metadata differs "
-                        "from the verified staged archive"
-                    )
-            except Exception:
-                current_sha256 = (
-                    _sha256_path(archive) if archive.is_file() else None
-                )
-                if current_sha256 != original_sha256:
-                    _restore_archive_backup(
-                        backup_path,
-                        archive,
-                        original_sha256,
-                    )
-                backup_path.unlink(missing_ok=True)
-                backup_path = None
-                raise
-
-            return RPFReplacementResult(
-                archive_path=archive,
-                backup_path=backup_path.resolve(),
-                entry_path=normalized_entry,
-                previous_size=previous_entry.size,
-                replacement_size=expected_size,
-                previous_offset=previous_entry.offset,
-                final_offset=committed_entry.offset,
-            )
-        except Exception:
-            if backup_path is not None:
-                current_sha256 = (
-                    _sha256_path(archive) if archive.is_file() else None
-                )
-                if current_sha256 == original_sha256:
-                    backup_path.unlink(missing_ok=True)
-                    backup_path = None
-            raise
-        finally:
-            for temporary in (
-                staged_archive,
-                staged_replacement,
-                pending_backup,
-            ):
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
+        return _replace_rpf_entry_transactional_locked(
+            archive,
+            executable,
+            normalized_entry,
+            replacement,
+            parser_factory=parser_factory,
+            replace_file=commit_file,
+        )
