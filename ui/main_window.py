@@ -10,6 +10,7 @@ from ui.pages.progress import ProgressPage
 from ui.pages.batch_replace import BatchReplacePage
 from ui.pages.radio_logo_install import RadioLogoInstallPage
 from ui.pages.audio_recovery import AudioRecoveryPage
+from ui.pages.rpf_browser import RPFBrowserPage
 from utils import install_ffmpeg, check_ffmpeg
 from ui.workers.batch_replacement import BatchReplaceWorker
 from ui.workers.single_replacement import SingleTrackReplacementWorker
@@ -30,6 +31,7 @@ class GTAIVEditor(QMainWindow):
         self.intro_page = IntroPage(
             on_next=self.goto_radio_select,
             on_settings=self.goto_settings,
+            on_rpf_browser=self.goto_rpf_browser,
         )
         self.settings_page = SettingsPage(
             on_back=self.goto_intro,
@@ -39,6 +41,7 @@ class GTAIVEditor(QMainWindow):
         self.batch_replace_page = None
         self.radio_logo_install_page = None
         self.audio_recovery_page = None
+        self.rpf_browser_page = None
         self.progress_page = ProgressPage(on_cancel=self.cancel_replace)
 
         self.setWindowTitle(application_title())
@@ -110,6 +113,18 @@ class GTAIVEditor(QMainWindow):
     def goto_settings(self):
         self.settings_page.reload()
         self.stack.setCurrentWidget(self.settings_page)
+
+    def goto_rpf_browser(self, gtaiv_path):
+        self.gtaiv_path = gtaiv_path
+        if self.rpf_browser_page is None:
+            self.rpf_browser_page = RPFBrowserPage(
+                gtaiv_path=self.gtaiv_path,
+                on_back=self.goto_intro,
+            )
+            self.stack.addWidget(self.rpf_browser_page)
+        else:
+            self.rpf_browser_page.set_gtaiv_path(self.gtaiv_path)
+        self.stack.setCurrentWidget(self.rpf_browser_page)
 
     def on_settings_saved(self):
         self.intro_page.reload_preferences(auto_detect=False)

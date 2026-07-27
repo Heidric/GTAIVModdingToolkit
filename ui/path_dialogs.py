@@ -11,6 +11,9 @@ class PathHistoryKey:
     RADIO_LOGO_PACK = "radio_logo_pack"
     RADIO_LOGO_IMAGE = "radio_logo_image"
     SUPPORT_BUNDLE = "support_bundle"
+    RPF_ARCHIVE = "rpf_archive"
+    RPF_EXPORT = "rpf_export"
+    WTD_TEXTURE_EXPORT = "wtd_texture_export"
 
 
 _SETTINGS_ORGANIZATION = "Heidric"

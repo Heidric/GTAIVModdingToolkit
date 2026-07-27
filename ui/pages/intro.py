@@ -35,10 +35,11 @@ from ui.styles import BUTTON_STYLE, GROUP_BOX_STYLE, LINE_EDIT_STYLE, RADIO_BUTT
 
 
 class IntroPage(QWidget):
-    def __init__(self, on_next, on_settings):
+    def __init__(self, on_next, on_settings, on_rpf_browser):
         super().__init__()
         self.on_next = on_next
         self.on_settings = on_settings
+        self.on_rpf_browser = on_rpf_browser
 
         self.layout = QVBoxLayout(self)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -89,6 +90,11 @@ class IntroPage(QWidget):
         self.settings_button.clicked.connect(self.on_settings)
         self.settings_button.setStyleSheet(BUTTON_STYLE)
         utility_buttons.addWidget(self.settings_button)
+
+        self.rpf_browser_button = QPushButton("RPF Browser", self)
+        self.rpf_browser_button.clicked.connect(self.open_rpf_browser)
+        self.rpf_browser_button.setStyleSheet(BUTTON_STYLE)
+        utility_buttons.addWidget(self.rpf_browser_button)
 
         self.support_bundle_button = QPushButton("Create Support Bundle", self)
         self.support_bundle_button.clicked.connect(self.create_support_bundle)
@@ -176,6 +182,19 @@ class IntroPage(QWidget):
             selected = installations[labels.index(label)]
 
         self._apply_detected_installation(selected, remember=True)
+
+    def open_rpf_browser(self):
+        gtaiv_path = self.path_input.text().strip()
+        if not is_gtaiv_installation(gtaiv_path):
+            QMessageBox.warning(
+                self,
+                "Invalid Path",
+                "Select a GTA IV installation before opening the RPF browser.",
+                QMessageBox.StandardButton.Ok,
+            )
+            return
+        remember_directory(PathHistoryKey.GTA_IV_INSTALLATION, gtaiv_path)
+        self.on_rpf_browser(gtaiv_path)
 
     def create_support_bundle(self):
         suggested_name = (
