@@ -1,4 +1,4 @@
-"""Read-only generic RPF and WTD browser page."""
+"""Generic RPF and WTD browser page."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ from ui.workers.rpf_browser import (
     RPFEntryExportWorker,
     RPFInspectWorker,
     RPFWTDInspectWorker,
+    RPFWTDTextureReplaceWorker,
     WTDTextureExportWorker,
     WTDTexturePreviewWorker,
 )
@@ -61,6 +62,13 @@ class RPFBrowserPage(QWidget):
         self._archive_request_id = 0
         self._wtd_request_id = 0
         self._preview_request_id = 0
+        self._replacement_worker = None
+        self._replacement_result = None
+        self._replacement_error = None
+        self._entry_export_in_progress = False
+        self._entry_items = {}
+        self._restore_entry_path = None
+        self._restore_texture_index = None
         self._temporary_directory = QTemporaryDir(
             "gtaiv-toolkit-rpf-browser-XXXXXX"
         )
@@ -89,15 +97,16 @@ class RPFBrowserPage(QWidget):
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #FFC107;")
         layout.addWidget(title)
 
-        read_only = QLabel(
-            "Read-only mode: inspect archives, preview WTD textures, and export files. "
-            "This page does not modify the game.",
+        safety_note = QLabel(
+            "Inspect and export RPF contents. Supported WTD textures can also be "
+            "replaced transactionally; the toolkit verifies the staged archive and "
+            "creates a backup before commit.",
             self,
         )
-        read_only.setWordWrap(True)
-        read_only.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        read_only.setStyleSheet("color: #B0BEC5;")
-        layout.addWidget(read_only)
+        safety_note.setWordWrap(True)
+        safety_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        safety_note.setStyleSheet("color: #B0BEC5;")
+        layout.addWidget(safety_note)
 
         archive_row = QHBoxLayout()
         self.archive_input = QLineEdit(self)
@@ -105,10 +114,10 @@ class RPFBrowserPage(QWidget):
         self.archive_input.setStyleSheet(LINE_EDIT_STYLE)
         archive_row.addWidget(self.archive_input, stretch=1)
 
-        browse_button = QPushButton("Browse", self)
-        browse_button.setStyleSheet(BUTTON_STYLE)
-        browse_button.clicked.connect(self.browse_archive)
-        archive_row.addWidget(browse_button)
+        self.browse_button = QPushButton("Browse", self)
+        self.browse_button.setStyleSheet(BUTTON_STYLE)
+        self.browse_button.clicked.connect(self.browse_archive)
+        archive_row.addWidget(self.browse_button)
 
         self.open_button = QPushButton("Open", self)
         self.open_button.setStyleSheet(BUTTON_STYLE)
@@ -124,10 +133,10 @@ class RPFBrowserPage(QWidget):
         layout.addWidget(splitter, stretch=1)
 
         footer = QHBoxLayout()
-        back_button = QPushButton("Back", self)
-        back_button.setStyleSheet(BUTTON_STYLE)
-        back_button.clicked.connect(self.on_back)
-        footer.addWidget(back_button)
+        self.back_button = QPushButton("Back", self)
+        self.back_button.setStyleSheet(BUTTON_STYLE)
+        self.back_button.clicked.connect(self.on_back)
+        footer.addWidget(self.back_button)
 
         self.status_label = QLabel("Select an RPF archive.", self)
         self.status_label.setStyleSheet("color: #B0BEC5;")
@@ -220,9 +229,19 @@ class RPFBrowserPage(QWidget):
         self.export_texture_button.setEnabled(False)
         self.export_texture_button.clicked.connect(self.export_selected_texture)
         layout.addWidget(self.export_texture_button)
+
+        self.replace_texture_button = QPushButton(
+            "Replace selected texture from image", panel
+        )
+        self.replace_texture_button.setStyleSheet(BUTTON_STYLE)
+        self.replace_texture_button.setEnabled(False)
+        self.replace_texture_button.clicked.connect(self.replace_selected_texture)
+        layout.addWidget(self.replace_texture_button)
         return panel
 
     def browse_archive(self):
+        if self._replacement_worker is not None:
+            return
         selected = select_open_file(
             self,
             "Open RPF Archive",
@@ -235,6 +254,8 @@ class RPFBrowserPage(QWidget):
             self.open_archive()
 
     def open_archive(self):
+        if self._replacement_worker is not None:
+            return
         archive_path = self.archive_input.text().strip()
         if not archive_path:
             QMessageBox.warning(self, "RPF Archive", "Select an RPF archive first.")
@@ -256,6 +277,7 @@ class RPFBrowserPage(QWidget):
             return
         self.archive_snapshot = snapshot
         self.archive_input.setText(str(snapshot.archive_path))
+        self._entry_items.clear()
         nodes = build_rpf_browser_tree(snapshot.entries)
         for node in nodes:
             self.entry_tree.addTopLevelItem(self._tree_item(node))
@@ -263,10 +285,23 @@ class RPFBrowserPage(QWidget):
         self.status_label.setText(
             f"Loaded {len(snapshot.entries)} file entries from {snapshot.archive_path.name}."
         )
+        if self._restore_entry_path is not None:
+            item = self._entry_items.get(self._restore_entry_path)
+            if item is None:
+                self._restore_entry_path = None
+                self._restore_texture_index = None
+                self.status_label.setText(
+                    "Archive reloaded, but the previously selected WTD entry is missing."
+                )
+            else:
+                self.entry_tree.setCurrentItem(item)
+                self.entry_tree.scrollToItem(item)
 
     def _on_archive_error(self, request_id: int, message: str):
         if request_id != self._archive_request_id:
             return
+        self._restore_entry_path = None
+        self._restore_texture_index = None
         self.status_label.setText("Could not read the RPF archive.")
         QMessageBox.critical(self, "RPF Browser Error", message)
 
@@ -278,6 +313,7 @@ class RPFBrowserPage(QWidget):
                 (node.name, self._format_bytes(node.entry.size), f"0x{node.entry.offset:X}")
             )
             item.setData(0, _ENTRY_ROLE, node.entry)
+            self._entry_items[node.entry.path] = item
         for child in node.children:
             item.addChild(self._tree_item(child))
         return item
@@ -350,18 +386,33 @@ class RPFBrowserPage(QWidget):
                     item.setData(_TEXTURE_INDEX_ROLE, texture.index)
                 self.texture_table.setItem(row, column, item)
         self.status_label.setText(f"Loaded WTD entry {entry_path}.")
+        if self._restore_entry_path == entry_path:
+            restore_index = self._restore_texture_index
+            self._restore_entry_path = None
+            self._restore_texture_index = None
+            if restore_index is not None:
+                for row in range(self.texture_table.rowCount()):
+                    item = self.texture_table.item(row, 0)
+                    if item is not None and item.data(_TEXTURE_INDEX_ROLE) == restore_index:
+                        self.texture_table.setCurrentCell(row, 0)
+                        self.texture_table.scrollToItem(item)
+                        break
 
     def _on_wtd_error(self, request_id, entry_path, message):
         if request_id != self._wtd_request_id:
             return
         if self.selected_entry is None or self.selected_entry.path != entry_path:
             return
+        if self._restore_entry_path == entry_path:
+            self._restore_entry_path = None
+            self._restore_texture_index = None
         self.wtd_details.setText("The selected WTD could not be read.")
         self.status_label.setText(f"Could not inspect {entry_path}.")
         QMessageBox.critical(self, "WTD Inspection Error", message)
 
     def on_texture_selected(self, current_row, _current_column, _previous_row, _previous_column):
         self.export_texture_button.setEnabled(False)
+        self.replace_texture_button.setEnabled(False)
         self.preview_label.clear()
         if current_row < 0 or self.wtd_snapshot is None or not self.extracted_wtd_path:
             self.preview_label.setText("No texture selected.")
@@ -374,6 +425,9 @@ class RPFBrowserPage(QWidget):
         texture_index = index_item.data(_TEXTURE_INDEX_ROLE)
         texture = self.wtd_snapshot.texture(texture_index)
         self.export_texture_button.setEnabled(texture.extractable)
+        self.replace_texture_button.setEnabled(
+            texture.replaceable and self._replacement_worker is None
+        )
         if not texture.extractable:
             self.preview_label.setText(
                 f"Preview unavailable for {texture.format_name}."
@@ -422,6 +476,8 @@ class RPFBrowserPage(QWidget):
         self.status_label.setText(message)
 
     def export_selected_entry(self):
+        if self._replacement_worker is not None:
+            return
         if self.selected_entry is None or self.archive_snapshot is None:
             return
         destination = select_save_file(
@@ -437,6 +493,7 @@ class RPFBrowserPage(QWidget):
         if overwrite is None:
             return
         self.export_entry_button.setEnabled(False)
+        self._entry_export_in_progress = True
         worker = RPFEntryExportWorker(
             str(self.archive_snapshot.archive_path),
             self.gtaiv_exe_path,
@@ -446,10 +503,14 @@ class RPFBrowserPage(QWidget):
         )
         worker.completed.connect(self._on_entry_exported)
         worker.error.connect(self._on_export_error)
-        worker.finished.connect(
-            lambda: self.export_entry_button.setEnabled(self.selected_entry is not None)
-        )
+        worker.finished.connect(self._on_entry_export_finished)
         self._start_worker(worker)
+
+    def _on_entry_export_finished(self):
+        self._entry_export_in_progress = False
+        self.export_entry_button.setEnabled(
+            self._replacement_worker is None and self.selected_entry is not None
+        )
 
     def _on_entry_exported(self, path: str):
         self.status_label.setText(f"Exported RPF entry to {path}.")
@@ -488,6 +549,165 @@ class RPFBrowserPage(QWidget):
         worker.finished.connect(self._restore_texture_export_button)
         self._start_worker(worker)
 
+    def replace_selected_texture(self):
+        texture_index = self._selected_texture_index()
+        if (
+            texture_index is None
+            or self.wtd_snapshot is None
+            or self.archive_snapshot is None
+            or self.selected_entry is None
+            or self._replacement_worker is not None
+        ):
+            return
+
+        if self._entry_export_in_progress:
+            QMessageBox.warning(
+                self,
+                "Texture Replacement",
+                "Wait for the current RPF entry export to finish before modifying "
+                "the archive.",
+            )
+            return
+
+        texture = self.wtd_snapshot.texture(texture_index)
+        if not texture.replaceable:
+            QMessageBox.warning(
+                self,
+                "Texture Replacement",
+                f"The {texture.format_name} texture format is not replaceable.",
+            )
+            return
+
+        image_path = select_open_file(
+            self,
+            "Select Replacement Image",
+            PathHistoryKey.WTD_TEXTURE_REPLACEMENT,
+            file_filter=(
+                "Supported Images (*.png *.webp *.jpg *.jpeg *.bmp *.tga);;"
+                "PNG Images (*.png);;WebP Images (*.webp);;All Files (*)"
+            ),
+        )
+        if not image_path:
+            return
+
+        archive_path = str(self.archive_snapshot.archive_path)
+        response = QMessageBox.question(
+            self,
+            "Confirm Texture Replacement",
+            "This operation modifies the selected RPF archive in place after "
+            "staging and verification. A timestamped backup of the original "
+            "archive will be retained.\n\n"
+            f"Archive: {archive_path}\n"
+            f"WTD entry: {self.selected_entry.path}\n"
+            f"Texture: #{texture.index} {texture.name} "
+            f"({texture.width} × {texture.height}, {texture.format_name})\n"
+            f"Replacement image: {image_path}\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        self._replacement_result = None
+        self._replacement_error = None
+        self._restore_entry_path = self.selected_entry.path
+        self._restore_texture_index = texture.index
+        worker = RPFWTDTextureReplaceWorker(
+            archive_path,
+            self.gtaiv_exe_path,
+            self.selected_entry.path,
+            texture.index,
+            image_path,
+        )
+        self._replacement_worker = worker
+        self._set_replacement_busy(True)
+        self.status_label.setText(
+            f"Replacing texture {texture.name} and verifying the staged RPF archive..."
+        )
+        worker.completed.connect(self._on_texture_replaced)
+        worker.error.connect(self._on_texture_replacement_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_texture_replacement_finished(current)
+        )
+        self._start_worker(worker)
+
+    def _on_texture_replaced(self, result):
+        self._replacement_result = result
+        self.status_label.setText(
+            f"Replaced texture {result.texture.name}; finalizing the UI state..."
+        )
+
+    def _on_texture_replacement_error(self, message: str):
+        self._replacement_result = None
+        self._replacement_error = message
+        self._restore_entry_path = None
+        self._restore_texture_index = None
+        self.status_label.setText("Texture replacement failed.")
+
+    def _on_texture_replacement_finished(self, worker):
+        if self._replacement_worker is not worker:
+            return
+        self._replacement_worker = None
+        result = self._replacement_result
+        error_message = self._replacement_error
+        self._replacement_result = None
+        self._replacement_error = None
+        self._set_replacement_busy(False)
+
+        if result is not None:
+            relocation = "yes" if result.relocated else "no"
+            QMessageBox.information(
+                self,
+                "Texture Replaced",
+                f"Texture #{result.texture.index} {result.texture.name} was replaced "
+                "and the committed archive was verified.\n\n"
+                f"Backup: {result.backup_path}\n"
+                f"RPF entry relocated: {relocation}",
+            )
+            self.open_archive()
+            return
+
+        QMessageBox.critical(
+            self,
+            "Texture Replacement Error",
+            "The transactional replacement failed. The original RPF archive "
+            f"was preserved or restored.\n\n{error_message or 'Unknown error'}",
+        )
+        self._restore_texture_actions()
+
+    def _set_replacement_busy(self, busy: bool):
+        self.archive_input.setEnabled(not busy)
+        self.browse_button.setEnabled(not busy)
+        self.open_button.setEnabled(not busy)
+        self.back_button.setEnabled(not busy)
+        self.entry_tree.setEnabled(not busy)
+        self.texture_table.setEnabled(not busy)
+        self.export_entry_button.setEnabled(
+            not busy and self.selected_entry is not None
+        )
+        if busy:
+            self.export_texture_button.setEnabled(False)
+            self.replace_texture_button.setEnabled(False)
+        else:
+            self._restore_texture_actions()
+
+    def _restore_texture_actions(self):
+        if self._replacement_worker is not None:
+            self.export_texture_button.setEnabled(False)
+            self.replace_texture_button.setEnabled(False)
+            return
+        texture_index = self._selected_texture_index()
+        if texture_index is None or self.wtd_snapshot is None:
+            self.export_texture_button.setEnabled(False)
+            self.replace_texture_button.setEnabled(False)
+            return
+        texture = self.wtd_snapshot.texture(texture_index)
+        self.export_texture_button.setEnabled(texture.extractable)
+        self.replace_texture_button.setEnabled(
+            texture.replaceable and self._replacement_worker is None
+        )
+
     def _on_texture_exported(self, path: str):
         self.status_label.setText(f"Exported texture to {path}.")
         QMessageBox.information(self, "Export Complete", f"Exported to:\n{path}")
@@ -497,13 +717,7 @@ class RPFBrowserPage(QWidget):
         QMessageBox.critical(self, "Export Error", message)
 
     def _restore_texture_export_button(self):
-        texture_index = self._selected_texture_index()
-        if texture_index is None or self.wtd_snapshot is None:
-            self.export_texture_button.setEnabled(False)
-            return
-        self.export_texture_button.setEnabled(
-            self.wtd_snapshot.texture(texture_index).extractable
-        )
+        self._restore_texture_actions()
 
     def _selected_texture_index(self):
         row = self.texture_table.currentRow()
@@ -516,6 +730,7 @@ class RPFBrowserPage(QWidget):
         self.archive_snapshot = None
         self.selected_entry = None
         self.entry_tree.clear()
+        self._entry_items.clear()
         self.entry_details.setText("No entry selected.")
         self.export_entry_button.setEnabled(False)
         self._clear_wtd()
@@ -530,6 +745,7 @@ class RPFBrowserPage(QWidget):
         self.preview_label.clear()
         self.preview_label.setText("No texture selected.")
         self.export_texture_button.setEnabled(False)
+        self.replace_texture_button.setEnabled(False)
 
     def _start_worker(self, worker):
         self._workers.add(worker)

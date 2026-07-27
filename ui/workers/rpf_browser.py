@@ -1,4 +1,4 @@
-"""Qt workers for read-only RPF and WTD browser operations."""
+"""Qt workers for RPF and WTD browser operations."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from core.rpf_archive import export_rpf_entry, inspect_rpf_archive
+from core.rpf_wtd import replace_rpf_wtd_texture_from_image_transactional
 from core.wtd_archive import (
     export_wtd_texture,
     inspect_wtd_archive,
@@ -172,3 +173,41 @@ class WTDTextureExportWorker(QThread):
             self.error.emit(str(exc))
             return
         self.completed.emit(str(result))
+
+
+class RPFWTDTextureReplaceWorker(QThread):
+    completed = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        archive_path: str,
+        gtaiv_exe_path: str,
+        entry_path: str,
+        texture_index: int,
+        image_path: str,
+        *,
+        quality: float = 0.9,
+    ):
+        super().__init__()
+        self.archive_path = archive_path
+        self.gtaiv_exe_path = gtaiv_exe_path
+        self.entry_path = entry_path
+        self.texture_index = texture_index
+        self.image_path = image_path
+        self.quality = quality
+
+    def run(self):
+        try:
+            result = replace_rpf_wtd_texture_from_image_transactional(
+                self.archive_path,
+                self.gtaiv_exe_path,
+                self.entry_path,
+                self.texture_index,
+                self.image_path,
+                quality=self.quality,
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+            return
+        self.completed.emit(result)

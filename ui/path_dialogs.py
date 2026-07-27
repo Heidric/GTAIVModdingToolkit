@@ -14,6 +14,7 @@ class PathHistoryKey:
     RPF_ARCHIVE = "rpf_archive"
     RPF_EXPORT = "rpf_export"
     WTD_TEXTURE_EXPORT = "wtd_texture_export"
+    WTD_TEXTURE_REPLACEMENT = "wtd_texture_replacement"
 
 
 _SETTINGS_ORGANIZATION = "Heidric"
