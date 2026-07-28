@@ -127,10 +127,30 @@ def test_browser_exposes_transactional_entry_replacement_controls():
     assert "RPF_ENTRY_REPLACEMENT" in dialogs_source
 
 
+def test_browser_hardens_worker_lifecycle_and_backup_access():
+    page_source = (ROOT / "ui/pages/rpf_browser.py").read_text(encoding="utf-8")
+    worker_source = (ROOT / "ui/workers/rpf_browser.py").read_text(encoding="utf-8")
+    main_source = (ROOT / "ui/main_window.py").read_text(encoding="utf-8")
+
+    assert "_texture_export_in_progress" in page_source
+    assert "_file_operation_in_progress" in page_source
+    assert "_cleanup_temporary_wtd_files" in page_source
+    assert "Open latest backup folder" in page_source
+    assert "QDesktopServices.openUrl" in page_source
+    assert "has_active_workers" in page_source
+    assert "active_operation_description" in page_source
+    assert "Path(self.extracted_path).unlink" in worker_source
+    assert "def closeEvent" in main_source
+    assert "event.ignore()" in main_source
+    assert "has_active_workers()" in main_source
+
+
 def _load_rpf_browser_workers(
     monkeypatch,
     texture_replacement_function,
     entry_replacement_function=None,
+    rpf_export_function=None,
+    wtd_inspect_function=None,
 ):
     import importlib.util
     import sys
@@ -169,7 +189,9 @@ def _load_rpf_browser_workers(
     pyside.QtCore = qt_core
 
     rpf_archive = types.ModuleType("core.rpf_archive")
-    rpf_archive.export_rpf_entry = lambda *args, **kwargs: None
+    rpf_archive.export_rpf_entry = (
+        rpf_export_function or (lambda *args, **kwargs: None)
+    )
     rpf_archive.inspect_rpf_archive = lambda *args, **kwargs: None
     rpf_archive.replace_rpf_entry_transactional = (
         entry_replacement_function or (lambda *args, **kwargs: None)
@@ -182,7 +204,9 @@ def _load_rpf_browser_workers(
 
     wtd_archive = types.ModuleType("core.wtd_archive")
     wtd_archive.export_wtd_texture = lambda *args, **kwargs: None
-    wtd_archive.inspect_wtd_archive = lambda *args, **kwargs: None
+    wtd_archive.inspect_wtd_archive = (
+        wtd_inspect_function or (lambda *args, **kwargs: None)
+    )
     wtd_archive.render_wtd_texture_preview = lambda *args, **kwargs: None
 
     monkeypatch.setitem(sys.modules, "PySide6", pyside)
@@ -313,3 +337,37 @@ def test_texture_replacement_worker_reports_backend_error(monkeypatch):
 
     assert worker.completed.emitted == []
     assert worker.error.emitted == [("replacement failed",)]
+
+
+def test_wtd_inspection_worker_removes_partial_extraction_on_error(
+    monkeypatch, tmp_path
+):
+    extracted = tmp_path / "partial.wtd"
+
+    def export(_archive, _exe, _entry, destination, *, overwrite):
+        assert overwrite is True
+        Path(destination).write_bytes(b"partial")
+        return destination
+
+    def inspect(_path):
+        raise RuntimeError("invalid WTD")
+
+    workers = _load_rpf_browser_workers(
+        monkeypatch,
+        lambda *args, **kwargs: None,
+        rpf_export_function=export,
+        wtd_inspect_function=inspect,
+    )
+    worker = workers.RPFWTDInspectWorker(
+        4,
+        "archive.rpf",
+        "GTAIV.exe",
+        "textures/hud.wtd",
+        str(extracted),
+    )
+
+    worker.run()
+
+    assert not extracted.exists()
+    assert worker.completed.emitted == []
+    assert worker.error.emitted == [(4, "textures/hud.wtd", "invalid WTD")]

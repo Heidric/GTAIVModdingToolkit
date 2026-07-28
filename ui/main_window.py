@@ -58,6 +58,30 @@ class GTAIVEditor(QMainWindow):
         self.stack.addWidget(self.progress_page)
         self.stack.setCurrentWidget(self.intro_page)
 
+    def closeEvent(self, event):
+        active_operation = self._active_close_operation()
+        if active_operation:
+            QMessageBox.warning(
+                self,
+                "Operation In Progress",
+                f"Wait for {active_operation} to finish before closing the toolkit. "
+                "Closing the process mid-operation could interrupt file verification "
+                "or cleanup.",
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _active_close_operation(self) -> str:
+        if self.worker is not None:
+            return "the active audio replacement operation"
+        if (
+            self.rpf_browser_page is not None
+            and self.rpf_browser_page.has_active_workers()
+        ):
+            return self.rpf_browser_page.active_operation_description()
+        return ""
+
     def start_replace(self, new_song_path):
         self.new_song_path = new_song_path
 

@@ -71,6 +71,10 @@ class RPFWTDInspectWorker(QThread):
             )
             snapshot = inspect_wtd_archive(local_path)
         except Exception as exc:
+            try:
+                Path(self.extracted_path).unlink(missing_ok=True)
+            except OSError:
+                pass
             self.error.emit(self.request_id, self.entry_path, str(exc))
             return
         self.completed.emit(

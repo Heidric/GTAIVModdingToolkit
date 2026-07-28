@@ -6,8 +6,8 @@ import hashlib
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QTemporaryDir, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QTemporaryDir, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -66,8 +66,12 @@ class RPFBrowserPage(QWidget):
         self._replacement_worker = None
         self._replacement_result = None
         self._replacement_error = None
+        self._archive_open_in_progress = False
         self._entry_export_in_progress = False
+        self._texture_export_in_progress = False
         self._entry_items = {}
+        self._temporary_wtd_paths = set()
+        self._last_backup_path = None
         self._restore_entry_path = None
         self._restore_texture_index = None
         self._temporary_directory = QTemporaryDir(
@@ -85,10 +89,12 @@ class RPFBrowserPage(QWidget):
             return
         self.gtaiv_path = resolved
         self.gtaiv_exe_path = str(Path(resolved) / "GTAIV.exe")
+        self._last_backup_path = None
         self._archive_request_id += 1
         self._clear_archive()
         self.archive_input.clear()
         self.status_label.setText("Select an RPF archive.")
+        self._refresh_controls()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -138,6 +144,12 @@ class RPFBrowserPage(QWidget):
         self.back_button.setStyleSheet(BUTTON_STYLE)
         self.back_button.clicked.connect(self.on_back)
         footer.addWidget(self.back_button)
+
+        self.open_backup_button = QPushButton("Open latest backup folder", self)
+        self.open_backup_button.setStyleSheet(BUTTON_STYLE)
+        self.open_backup_button.setEnabled(False)
+        self.open_backup_button.clicked.connect(self._open_latest_backup_folder)
+        footer.addWidget(self.open_backup_button)
 
         self.status_label = QLabel("Select an RPF archive.", self)
         self.status_label.setStyleSheet("color: #B0BEC5;")
@@ -249,7 +261,7 @@ class RPFBrowserPage(QWidget):
         return panel
 
     def browse_archive(self):
-        if self._replacement_worker is not None:
+        if self._file_operation_in_progress() or self._archive_open_in_progress:
             return
         selected = select_open_file(
             self,
@@ -263,7 +275,7 @@ class RPFBrowserPage(QWidget):
             self.open_archive()
 
     def open_archive(self):
-        if self._replacement_worker is not None:
+        if self._file_operation_in_progress() or self._archive_open_in_progress:
             return
         archive_path = self.archive_input.text().strip()
         if not archive_path:
@@ -273,13 +285,18 @@ class RPFBrowserPage(QWidget):
         self._clear_archive()
         self._archive_request_id += 1
         request_id = self._archive_request_id
-        self.open_button.setEnabled(False)
+        self._archive_open_in_progress = True
+        self._refresh_controls()
         self.status_label.setText("Reading RPF archive...")
         worker = RPFInspectWorker(request_id, archive_path, self.gtaiv_exe_path)
         worker.completed.connect(self._on_archive_loaded)
         worker.error.connect(self._on_archive_error)
-        worker.finished.connect(lambda: self.open_button.setEnabled(True))
+        worker.finished.connect(self._on_archive_open_finished)
         self._start_worker(worker)
+
+    def _on_archive_open_finished(self):
+        self._archive_open_in_progress = False
+        self._refresh_controls()
 
     def _on_archive_loaded(self, request_id, snapshot):
         if request_id != self._archive_request_id:
@@ -354,6 +371,7 @@ class RPFBrowserPage(QWidget):
         extracted_path = str(
             Path(self._temporary_directory.path()) / f"{request_id}-{digest}.wtd"
         )
+        self._temporary_wtd_paths.add(Path(extracted_path))
         self.wtd_details.setText("Extracting and reading WTD metadata...")
         worker = RPFWTDInspectWorker(
             request_id,
@@ -368,11 +386,17 @@ class RPFBrowserPage(QWidget):
 
     def _on_wtd_loaded(self, request_id, entry_path, snapshot, local_path):
         if request_id != self._wtd_request_id:
+            self._discard_temporary_wtd(local_path)
             return
         if self.selected_entry is None or self.selected_entry.path != entry_path:
+            self._discard_temporary_wtd(local_path)
             return
+        previous_path = self.extracted_wtd_path
         self.wtd_snapshot = snapshot
         self.extracted_wtd_path = local_path
+        self._temporary_wtd_paths.add(Path(local_path))
+        if previous_path and previous_path != local_path:
+            self._discard_temporary_wtd(previous_path)
         self.wtd_details.setText(
             f"Textures: {len(snapshot.textures)} | "
             f"Virtual: {self._format_bytes(snapshot.virtual_size)} | "
@@ -433,10 +457,7 @@ class RPFBrowserPage(QWidget):
             return
         texture_index = index_item.data(_TEXTURE_INDEX_ROLE)
         texture = self.wtd_snapshot.texture(texture_index)
-        self.export_texture_button.setEnabled(texture.extractable)
-        self.replace_texture_button.setEnabled(
-            texture.replaceable and self._replacement_worker is None
-        )
+        self._restore_texture_actions()
         if not texture.extractable:
             self.preview_label.setText(
                 f"Preview unavailable for {texture.format_name}."
@@ -485,7 +506,7 @@ class RPFBrowserPage(QWidget):
         self.status_label.setText(message)
 
     def export_selected_entry(self):
-        if self._replacement_worker is not None:
+        if self._file_operation_in_progress():
             return
         if self.selected_entry is None or self.archive_snapshot is None:
             return
@@ -501,9 +522,8 @@ class RPFBrowserPage(QWidget):
         overwrite = self._confirm_overwrite(destination)
         if overwrite is None:
             return
-        self.export_entry_button.setEnabled(False)
-        self.replace_entry_button.setEnabled(False)
         self._entry_export_in_progress = True
+        self._refresh_controls()
         worker = RPFEntryExportWorker(
             str(self.archive_snapshot.archive_path),
             self.gtaiv_exe_path,
@@ -518,7 +538,7 @@ class RPFBrowserPage(QWidget):
 
     def _on_entry_export_finished(self):
         self._entry_export_in_progress = False
-        self._restore_entry_actions()
+        self._refresh_controls()
 
     def _on_entry_exported(self, path: str):
         self.status_label.setText(f"Exported RPF entry to {path}.")
@@ -531,12 +551,11 @@ class RPFBrowserPage(QWidget):
             or self._replacement_worker is not None
         ):
             return
-        if self._entry_export_in_progress:
+        if self._export_in_progress():
             QMessageBox.warning(
                 self,
                 "RPF Entry Replacement",
-                "Wait for the current RPF entry export to finish before modifying "
-                "the archive.",
+                "Wait for the current export to finish before modifying the archive.",
             )
             return
 
@@ -609,7 +628,8 @@ class RPFBrowserPage(QWidget):
             str(replacement),
         )
         self._replacement_worker = worker
-        self._set_replacement_busy(True)
+        self._invalidate_browser_reads()
+        self._refresh_controls()
         self.status_label.setText(
             f"Replacing RPF entry {self.selected_entry.path} and verifying the staged "
             "archive..."
@@ -642,9 +662,10 @@ class RPFBrowserPage(QWidget):
         error_message = self._replacement_error
         self._replacement_result = None
         self._replacement_error = None
-        self._set_replacement_busy(False)
+        self._refresh_controls()
 
         if result is not None:
+            self._record_backup(result.backup_path)
             relocation = "yes" if result.relocated else "no"
             QMessageBox.information(
                 self,
@@ -670,6 +691,8 @@ class RPFBrowserPage(QWidget):
         self._restore_entry_actions()
 
     def export_selected_texture(self):
+        if self._file_operation_in_progress():
+            return
         texture_index = self._selected_texture_index()
         if texture_index is None or self.wtd_snapshot is None or not self.extracted_wtd_path:
             return
@@ -690,7 +713,8 @@ class RPFBrowserPage(QWidget):
         overwrite = self._confirm_overwrite(destination)
         if overwrite is None:
             return
-        self.export_texture_button.setEnabled(False)
+        self._texture_export_in_progress = True
+        self._refresh_controls()
         worker = WTDTextureExportWorker(
             self.extracted_wtd_path,
             texture_index,
@@ -699,7 +723,7 @@ class RPFBrowserPage(QWidget):
         )
         worker.completed.connect(self._on_texture_exported)
         worker.error.connect(self._on_export_error)
-        worker.finished.connect(self._restore_texture_export_button)
+        worker.finished.connect(self._on_texture_export_finished)
         self._start_worker(worker)
 
     def replace_selected_texture(self):
@@ -713,12 +737,11 @@ class RPFBrowserPage(QWidget):
         ):
             return
 
-        if self._entry_export_in_progress:
+        if self._export_in_progress():
             QMessageBox.warning(
                 self,
                 "Texture Replacement",
-                "Wait for the current RPF entry export to finish before modifying "
-                "the archive.",
+                "Wait for the current export to finish before modifying the archive.",
             )
             return
 
@@ -774,7 +797,8 @@ class RPFBrowserPage(QWidget):
             image_path,
         )
         self._replacement_worker = worker
-        self._set_replacement_busy(True)
+        self._invalidate_browser_reads()
+        self._refresh_controls()
         self.status_label.setText(
             f"Replacing texture {texture.name} and verifying the staged RPF archive..."
         )
@@ -806,9 +830,10 @@ class RPFBrowserPage(QWidget):
         error_message = self._replacement_error
         self._replacement_result = None
         self._replacement_error = None
-        self._set_replacement_busy(False)
+        self._refresh_controls()
 
         if result is not None:
+            self._record_backup(result.backup_path)
             relocation = "yes" if result.relocated else "no"
             QMessageBox.information(
                 self,
@@ -829,33 +854,35 @@ class RPFBrowserPage(QWidget):
         )
         self._restore_texture_actions()
 
-    def _set_replacement_busy(self, busy: bool):
-        self.archive_input.setEnabled(not busy)
-        self.browse_button.setEnabled(not busy)
-        self.open_button.setEnabled(not busy)
+    def _file_operation_in_progress(self) -> bool:
+        return self._replacement_worker is not None or self._export_in_progress()
+
+    def _export_in_progress(self) -> bool:
+        return self._entry_export_in_progress or self._texture_export_in_progress
+
+    def _refresh_controls(self):
+        busy = self._file_operation_in_progress()
+        self.archive_input.setEnabled(not busy and not self._archive_open_in_progress)
+        self.browse_button.setEnabled(not busy and not self._archive_open_in_progress)
+        self.open_button.setEnabled(not busy and not self._archive_open_in_progress)
         self.back_button.setEnabled(not busy)
         self.entry_tree.setEnabled(not busy)
         self.texture_table.setEnabled(not busy)
-        if busy:
-            self.export_entry_button.setEnabled(False)
-            self.replace_entry_button.setEnabled(False)
-            self.export_texture_button.setEnabled(False)
-            self.replace_texture_button.setEnabled(False)
-        else:
-            self._restore_entry_actions()
-            self._restore_texture_actions()
+        self.open_backup_button.setEnabled(
+            not busy
+            and self._last_backup_path is not None
+            and self._last_backup_path.parent.is_dir()
+        )
+        self._restore_entry_actions()
+        self._restore_texture_actions()
 
     def _restore_entry_actions(self):
-        enabled = (
-            self.selected_entry is not None
-            and self._replacement_worker is None
-            and not self._entry_export_in_progress
-        )
+        enabled = self.selected_entry is not None and not self._file_operation_in_progress()
         self.export_entry_button.setEnabled(enabled)
         self.replace_entry_button.setEnabled(enabled)
 
     def _restore_texture_actions(self):
-        if self._replacement_worker is not None:
+        if self._file_operation_in_progress():
             self.export_texture_button.setEnabled(False)
             self.replace_texture_button.setEnabled(False)
             return
@@ -866,9 +893,7 @@ class RPFBrowserPage(QWidget):
             return
         texture = self.wtd_snapshot.texture(texture_index)
         self.export_texture_button.setEnabled(texture.extractable)
-        self.replace_texture_button.setEnabled(
-            texture.replaceable and self._replacement_worker is None
-        )
+        self.replace_texture_button.setEnabled(texture.replaceable)
 
     def _on_texture_exported(self, path: str):
         self.status_label.setText(f"Exported texture to {path}.")
@@ -878,8 +903,9 @@ class RPFBrowserPage(QWidget):
         self.status_label.setText("Export failed.")
         QMessageBox.critical(self, "Export Error", message)
 
-    def _restore_texture_export_button(self):
-        self._restore_texture_actions()
+    def _on_texture_export_finished(self):
+        self._texture_export_in_progress = False
+        self._refresh_controls()
 
     def _selected_texture_index(self):
         row = self.texture_table.currentRow()
@@ -899,6 +925,7 @@ class RPFBrowserPage(QWidget):
         self._clear_wtd()
 
     def _clear_wtd(self):
+        previous_path = self.extracted_wtd_path
         self._wtd_request_id += 1
         self._preview_request_id += 1
         self.wtd_snapshot = None
@@ -909,6 +936,69 @@ class RPFBrowserPage(QWidget):
         self.preview_label.setText("No texture selected.")
         self.export_texture_button.setEnabled(False)
         self.replace_texture_button.setEnabled(False)
+        if previous_path:
+            self._discard_temporary_wtd(previous_path)
+
+    def _invalidate_browser_reads(self):
+        self._wtd_request_id += 1
+        self._preview_request_id += 1
+
+    def _discard_temporary_wtd(self, path: str | Path):
+        if not path:
+            return
+        temporary = Path(path)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            return
+        self._temporary_wtd_paths.discard(temporary)
+
+    def _cleanup_temporary_wtd_files(self):
+        current = Path(self.extracted_wtd_path) if self.extracted_wtd_path else None
+        for temporary in tuple(self._temporary_wtd_paths):
+            if current is not None and temporary == current:
+                continue
+            self._discard_temporary_wtd(temporary)
+
+    def _record_backup(self, backup_path):
+        self._last_backup_path = Path(backup_path).expanduser().resolve()
+        self._refresh_controls()
+
+    def _open_latest_backup_folder(self):
+        if self._last_backup_path is None:
+            return
+        directory = self._last_backup_path.parent
+        if not directory.is_dir():
+            QMessageBox.warning(
+                self,
+                "Backup Folder",
+                f"The backup directory no longer exists:\n{directory}",
+            )
+            self._last_backup_path = None
+            self._refresh_controls()
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory))):
+            QMessageBox.warning(
+                self,
+                "Backup Folder",
+                f"Could not open the backup directory:\n{directory}",
+            )
+
+    def has_active_workers(self) -> bool:
+        return bool(self._workers)
+
+    def active_operation_description(self) -> str:
+        if self._replacement_worker is not None:
+            return "an RPF replacement transaction"
+        if self._entry_export_in_progress:
+            return "an RPF entry export"
+        if self._texture_export_in_progress:
+            return "a WTD texture export"
+        if self._archive_open_in_progress:
+            return "an RPF archive inspection"
+        if self._workers:
+            return "an RPF browser background operation"
+        return ""
 
     def _start_worker(self, worker):
         self._workers.add(worker)
@@ -918,6 +1008,7 @@ class RPFBrowserPage(QWidget):
     def _release_worker(self, worker):
         self._workers.discard(worker)
         worker.deleteLater()
+        self._cleanup_temporary_wtd_files()
 
     def _confirm_overwrite(self, path: str) -> bool | None:
         if not Path(path).exists():
