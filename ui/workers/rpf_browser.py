@@ -6,7 +6,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from core.rpf_archive import export_rpf_entry, inspect_rpf_archive
+from core.rpf_archive import (
+    export_rpf_entry,
+    inspect_rpf_archive,
+    replace_rpf_entry_transactional,
+)
 from core.rpf_wtd import replace_rpf_wtd_texture_from_image_transactional
 from core.wtd_archive import (
     export_wtd_texture,
@@ -110,6 +114,37 @@ class RPFEntryExportWorker(QThread):
             self.error.emit(str(exc))
             return
         self.completed.emit(str(result))
+
+
+class RPFEntryReplaceWorker(QThread):
+    completed = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        archive_path: str,
+        gtaiv_exe_path: str,
+        entry_path: str,
+        replacement_path: str,
+    ):
+        super().__init__()
+        self.archive_path = archive_path
+        self.gtaiv_exe_path = gtaiv_exe_path
+        self.entry_path = entry_path
+        self.replacement_path = replacement_path
+
+    def run(self):
+        try:
+            result = replace_rpf_entry_transactional(
+                self.archive_path,
+                self.gtaiv_exe_path,
+                self.entry_path,
+                self.replacement_path,
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+            return
+        self.completed.emit(result)
 
 
 class WTDTexturePreviewWorker(QThread):

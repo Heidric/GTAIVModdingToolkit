@@ -87,6 +87,7 @@ def test_browser_page_does_not_define_qthreads():
         "RPFInspectWorker",
         "RPFWTDInspectWorker",
         "RPFEntryExportWorker",
+        "RPFEntryReplaceWorker",
         "WTDTexturePreviewWorker",
         "WTDTextureExportWorker",
         "RPFWTDTextureReplaceWorker",
@@ -113,7 +114,24 @@ def test_browser_exposes_transactional_texture_replacement_controls():
     assert "WTD_TEXTURE_REPLACEMENT" in dialogs_source
 
 
-def _load_rpf_browser_workers(monkeypatch, replacement_function):
+def test_browser_exposes_transactional_entry_replacement_controls():
+    page_source = (ROOT / "ui/pages/rpf_browser.py").read_text(encoding="utf-8")
+    worker_source = (ROOT / "ui/workers/rpf_browser.py").read_text(encoding="utf-8")
+    dialogs_source = (ROOT / "ui/path_dialogs.py").read_text(encoding="utf-8")
+
+    assert "replace_selected_entry" in page_source
+    assert "Confirm RPF Entry Replacement" in page_source
+    assert "Previous size" in page_source
+    assert "replace_rpf_entry_transactional" not in page_source
+    assert "replace_rpf_entry_transactional" in worker_source
+    assert "RPF_ENTRY_REPLACEMENT" in dialogs_source
+
+
+def _load_rpf_browser_workers(
+    monkeypatch,
+    texture_replacement_function,
+    entry_replacement_function=None,
+):
     import importlib.util
     import sys
     import types
@@ -153,9 +171,14 @@ def _load_rpf_browser_workers(monkeypatch, replacement_function):
     rpf_archive = types.ModuleType("core.rpf_archive")
     rpf_archive.export_rpf_entry = lambda *args, **kwargs: None
     rpf_archive.inspect_rpf_archive = lambda *args, **kwargs: None
+    rpf_archive.replace_rpf_entry_transactional = (
+        entry_replacement_function or (lambda *args, **kwargs: None)
+    )
 
     rpf_wtd = types.ModuleType("core.rpf_wtd")
-    rpf_wtd.replace_rpf_wtd_texture_from_image_transactional = replacement_function
+    rpf_wtd.replace_rpf_wtd_texture_from_image_transactional = (
+        texture_replacement_function
+    )
 
     wtd_archive = types.ModuleType("core.wtd_archive")
     wtd_archive.export_wtd_texture = lambda *args, **kwargs: None
@@ -176,6 +199,65 @@ def _load_rpf_browser_workers(monkeypatch, replacement_function):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_entry_replacement_worker_forwards_transaction_arguments(monkeypatch):
+    calls = []
+    expected_result = object()
+
+    def replace(*args, **kwargs):
+        calls.append((args, kwargs))
+        return expected_result
+
+    workers = _load_rpf_browser_workers(
+        monkeypatch,
+        lambda *args, **kwargs: None,
+        entry_replacement_function=replace,
+    )
+    worker = workers.RPFEntryReplaceWorker(
+        "archive.rpf",
+        "GTAIV.exe",
+        "textures/hud.wtd",
+        "replacement.wtd",
+    )
+
+    worker.run()
+
+    assert calls == [
+        (
+            (
+                "archive.rpf",
+                "GTAIV.exe",
+                "textures/hud.wtd",
+                "replacement.wtd",
+            ),
+            {},
+        )
+    ]
+    assert worker.completed.emitted == [(expected_result,)]
+    assert worker.error.emitted == []
+
+
+def test_entry_replacement_worker_reports_backend_error(monkeypatch):
+    def replace(*_args, **_kwargs):
+        raise RuntimeError("entry replacement failed")
+
+    workers = _load_rpf_browser_workers(
+        monkeypatch,
+        lambda *args, **kwargs: None,
+        entry_replacement_function=replace,
+    )
+    worker = workers.RPFEntryReplaceWorker(
+        "archive.rpf",
+        "GTAIV.exe",
+        "textures/hud.wtd",
+        "replacement.wtd",
+    )
+
+    worker.run()
+
+    assert worker.completed.emitted == []
+    assert worker.error.emitted == [("entry replacement failed",)]
 
 
 def test_texture_replacement_worker_forwards_transaction_arguments(monkeypatch):

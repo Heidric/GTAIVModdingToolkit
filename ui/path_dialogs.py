@@ -13,6 +13,7 @@ class PathHistoryKey:
     SUPPORT_BUNDLE = "support_bundle"
     RPF_ARCHIVE = "rpf_archive"
     RPF_EXPORT = "rpf_export"
+    RPF_ENTRY_REPLACEMENT = "rpf_entry_replacement"
     WTD_TEXTURE_EXPORT = "wtd_texture_export"
     WTD_TEXTURE_REPLACEMENT = "wtd_texture_replacement"
 

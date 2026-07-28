@@ -34,6 +34,7 @@ from ui.rpf_browser_model import RPFBrowserNode, build_rpf_browser_tree
 from ui.styles import BUTTON_STYLE, LINE_EDIT_STYLE
 from ui.workers.rpf_browser import (
     RPFEntryExportWorker,
+    RPFEntryReplaceWorker,
     RPFInspectWorker,
     RPFWTDInspectWorker,
     RPFWTDTextureReplaceWorker,
@@ -98,9 +99,9 @@ class RPFBrowserPage(QWidget):
         layout.addWidget(title)
 
         safety_note = QLabel(
-            "Inspect and export RPF contents. Supported WTD textures can also be "
-            "replaced transactionally; the toolkit verifies the staged archive and "
-            "creates a backup before commit.",
+            "Inspect, export, and transactionally replace existing RPF entries. "
+            "Supported WTD textures can also be replaced individually. The toolkit "
+            "verifies the staged archive and creates a backup before commit.",
             self,
         )
         safety_note.setWordWrap(True)
@@ -175,6 +176,14 @@ class RPFBrowserPage(QWidget):
         self.export_entry_button.setEnabled(False)
         self.export_entry_button.clicked.connect(self.export_selected_entry)
         layout.addWidget(self.export_entry_button)
+
+        self.replace_entry_button = QPushButton(
+            "Replace selected entry from file", panel
+        )
+        self.replace_entry_button.setStyleSheet(BUTTON_STYLE)
+        self.replace_entry_button.setEnabled(False)
+        self.replace_entry_button.clicked.connect(self.replace_selected_entry)
+        layout.addWidget(self.replace_entry_button)
         return panel
 
     def _build_texture_panel(self) -> QWidget:
@@ -321,7 +330,7 @@ class RPFBrowserPage(QWidget):
     def on_entry_selected(self, current, _previous):
         entry = current.data(0, _ENTRY_ROLE) if current is not None else None
         self.selected_entry = entry
-        self.export_entry_button.setEnabled(entry is not None)
+        self._restore_entry_actions()
         self._clear_wtd()
         if entry is None:
             self.entry_details.setText("Directory selected.")
@@ -493,6 +502,7 @@ class RPFBrowserPage(QWidget):
         if overwrite is None:
             return
         self.export_entry_button.setEnabled(False)
+        self.replace_entry_button.setEnabled(False)
         self._entry_export_in_progress = True
         worker = RPFEntryExportWorker(
             str(self.archive_snapshot.archive_path),
@@ -508,13 +518,156 @@ class RPFBrowserPage(QWidget):
 
     def _on_entry_export_finished(self):
         self._entry_export_in_progress = False
-        self.export_entry_button.setEnabled(
-            self._replacement_worker is None and self.selected_entry is not None
-        )
+        self._restore_entry_actions()
 
     def _on_entry_exported(self, path: str):
         self.status_label.setText(f"Exported RPF entry to {path}.")
         QMessageBox.information(self, "Export Complete", f"Exported to:\n{path}")
+
+    def replace_selected_entry(self):
+        if (
+            self.selected_entry is None
+            or self.archive_snapshot is None
+            or self._replacement_worker is not None
+        ):
+            return
+        if self._entry_export_in_progress:
+            QMessageBox.warning(
+                self,
+                "RPF Entry Replacement",
+                "Wait for the current RPF entry export to finish before modifying "
+                "the archive.",
+            )
+            return
+
+        replacement_path = select_open_file(
+            self,
+            "Select Replacement File",
+            PathHistoryKey.RPF_ENTRY_REPLACEMENT,
+            file_filter="All Files (*)",
+            fallback=str(self.archive_snapshot.archive_path),
+        )
+        if not replacement_path:
+            return
+
+        archive_path = str(self.archive_snapshot.archive_path)
+        replacement = Path(replacement_path).expanduser().resolve()
+        archive = Path(archive_path).expanduser().resolve()
+        if replacement == archive:
+            QMessageBox.warning(
+                self,
+                "RPF Entry Replacement",
+                "The replacement file must not be the RPF archive itself.",
+            )
+            return
+        if not replacement.is_file():
+            QMessageBox.warning(
+                self,
+                "RPF Entry Replacement",
+                f"The replacement file does not exist:\n{replacement}",
+            )
+            return
+        try:
+            replacement_size = replacement.stat().st_size
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "RPF Entry Replacement",
+                f"Could not read the replacement file:\n{exc}",
+            )
+            return
+
+        response = QMessageBox.question(
+            self,
+            "Confirm RPF Entry Replacement",
+            "This operation replaces one existing entry inside the selected RPF "
+            "archive. It does not add, remove, or rename entries. The toolkit will "
+            "stage and verify the modified archive, retain a timestamped backup, and "
+            "only then commit the change.\n\n"
+            f"Archive: {archive_path}\n"
+            f"RPF entry: {self.selected_entry.path}\n"
+            f"Current size: {self._format_bytes(self.selected_entry.size)} "
+            f"({self.selected_entry.size} bytes)\n"
+            f"Replacement file: {replacement}\n"
+            f"Replacement size: {self._format_bytes(replacement_size)} "
+            f"({replacement_size} bytes)\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            return
+
+        self._replacement_result = None
+        self._replacement_error = None
+        self._restore_entry_path = self.selected_entry.path
+        self._restore_texture_index = None
+        worker = RPFEntryReplaceWorker(
+            archive_path,
+            self.gtaiv_exe_path,
+            self.selected_entry.path,
+            str(replacement),
+        )
+        self._replacement_worker = worker
+        self._set_replacement_busy(True)
+        self.status_label.setText(
+            f"Replacing RPF entry {self.selected_entry.path} and verifying the staged "
+            "archive..."
+        )
+        worker.completed.connect(self._on_entry_replaced)
+        worker.error.connect(self._on_entry_replacement_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_entry_replacement_finished(current)
+        )
+        self._start_worker(worker)
+
+    def _on_entry_replaced(self, result):
+        self._replacement_result = result
+        self.status_label.setText(
+            f"Replaced RPF entry {result.entry_path}; finalizing the UI state..."
+        )
+
+    def _on_entry_replacement_error(self, message: str):
+        self._replacement_result = None
+        self._replacement_error = message
+        self._restore_entry_path = None
+        self._restore_texture_index = None
+        self.status_label.setText("RPF entry replacement failed.")
+
+    def _on_entry_replacement_finished(self, worker):
+        if self._replacement_worker is not worker:
+            return
+        self._replacement_worker = None
+        result = self._replacement_result
+        error_message = self._replacement_error
+        self._replacement_result = None
+        self._replacement_error = None
+        self._set_replacement_busy(False)
+
+        if result is not None:
+            relocation = "yes" if result.relocated else "no"
+            QMessageBox.information(
+                self,
+                "RPF Entry Replaced",
+                f"Entry {result.entry_path} was replaced and the committed archive "
+                "was verified.\n\n"
+                f"Previous size: {self._format_bytes(result.previous_size)} "
+                f"({result.previous_size} bytes)\n"
+                f"Replacement size: {self._format_bytes(result.replacement_size)} "
+                f"({result.replacement_size} bytes)\n"
+                f"Backup: {result.backup_path}\n"
+                f"Entry relocated: {relocation}",
+            )
+            self.open_archive()
+            return
+
+        QMessageBox.critical(
+            self,
+            "RPF Entry Replacement Error",
+            "The transactional replacement failed. The original RPF archive was "
+            f"preserved or restored.\n\n{error_message or 'Unknown error'}",
+        )
+        self._restore_entry_actions()
 
     def export_selected_texture(self):
         texture_index = self._selected_texture_index()
@@ -683,14 +836,23 @@ class RPFBrowserPage(QWidget):
         self.back_button.setEnabled(not busy)
         self.entry_tree.setEnabled(not busy)
         self.texture_table.setEnabled(not busy)
-        self.export_entry_button.setEnabled(
-            not busy and self.selected_entry is not None
-        )
         if busy:
+            self.export_entry_button.setEnabled(False)
+            self.replace_entry_button.setEnabled(False)
             self.export_texture_button.setEnabled(False)
             self.replace_texture_button.setEnabled(False)
         else:
+            self._restore_entry_actions()
             self._restore_texture_actions()
+
+    def _restore_entry_actions(self):
+        enabled = (
+            self.selected_entry is not None
+            and self._replacement_worker is None
+            and not self._entry_export_in_progress
+        )
+        self.export_entry_button.setEnabled(enabled)
+        self.replace_entry_button.setEnabled(enabled)
 
     def _restore_texture_actions(self):
         if self._replacement_worker is not None:
@@ -733,6 +895,7 @@ class RPFBrowserPage(QWidget):
         self._entry_items.clear()
         self.entry_details.setText("No entry selected.")
         self.export_entry_button.setEnabled(False)
+        self.replace_entry_button.setEnabled(False)
         self._clear_wtd()
 
     def _clear_wtd(self):
