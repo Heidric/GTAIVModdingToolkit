@@ -137,6 +137,22 @@ def test_inspect_rpf_archive_returns_sorted_immutable_metadata(tmp_path):
     assert snapshot.entry("textures/HUD.WTD").parent == "textures"
 
 
+def test_inspect_rpf_archive_accepts_img_container_extension(tmp_path):
+    archive = tmp_path / "example.img"
+    executable = tmp_path / "GTAIV.exe"
+    archive.write_bytes(b"archive")
+    executable.write_bytes(b"executable")
+
+    snapshot = inspect_rpf_archive(
+        archive,
+        executable,
+        parser_factory=FakeParser,
+    )
+
+    assert snapshot.archive_path == archive.resolve()
+    assert snapshot.entry("textures/HUD.WTD").size == 7
+
+
 def test_export_rpf_entry_uses_explicit_destination(tmp_path):
     archive, executable = _files(tmp_path)
     destination = tmp_path / "exports" / "custom-name.wtd"

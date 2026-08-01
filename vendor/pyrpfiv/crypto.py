@@ -147,3 +147,17 @@ def decrypt_toc(data, aes_key):
         decrypted_data = cipher.decrypt(decrypted_data)
 
     return decrypted_data
+
+
+def encrypt_toc(data, aes_key):
+    """Encrypt TOC data using the 16-pass AES ECB scheme used by GTA IV."""
+    if len(data) % 16 != 0:
+        raise TOCDecryptionError("TOC data size is not a multiple of 16 bytes.")
+
+    cipher = AES.new(aes_key, AES.MODE_ECB)
+    encrypted_data = bytes(data)
+
+    for _ in range(16):
+        encrypted_data = cipher.encrypt(encrypted_data)
+
+    return encrypted_data

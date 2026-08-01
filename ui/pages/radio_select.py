@@ -20,7 +20,7 @@ from core.radio_logo.ui_icons import (
     resolve_station_icon_path,
 )
 from ui.styles import BUTTON_STYLE, SCROLL_AREA_STYLE, TOOL_BUTTON_STYLE
-from utils import resource_path
+from ui.application_utils import resource_path
 
 
 class RadioSelectPage(QWidget):

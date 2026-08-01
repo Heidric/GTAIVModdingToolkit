@@ -68,6 +68,12 @@ def test_browser_tree_rejects_file_directory_collisions():
         build_rpf_browser_tree(entries)
 
 
+def test_browser_exposes_img_archive_selection():
+    page_source = (ROOT / "ui/pages/rpf_browser.py").read_text(encoding="utf-8")
+
+    assert "GTA IV Archives (*.rpf *.img)" in page_source
+
+
 def test_browser_page_keeps_backend_operations_in_worker_module():
     page_modules = _imported_modules("ui/pages/rpf_browser.py")
     worker_modules = _imported_modules("ui/workers/rpf_browser.py")
@@ -125,6 +131,15 @@ def test_browser_exposes_transactional_entry_replacement_controls():
     assert "replace_rpf_entry_transactional" not in page_source
     assert "replace_rpf_entry_transactional" in worker_source
     assert "RPF_ENTRY_REPLACEMENT" in dialogs_source
+
+
+def test_browser_decodes_preview_png_with_qt_compatible_types():
+    page_source = (ROOT / "ui/pages/rpf_browser.py").read_text(encoding="utf-8")
+
+    assert "QByteArray(preview.png_data)" in page_source
+    assert 'QImage.fromData(QByteArray(preview.png_data), "PNG")' in page_source
+    assert "QPixmap.fromImage(image)" in page_source
+    assert 'loadFromData(preview.png_data, b"PNG")' not in page_source
 
 
 def test_browser_hardens_worker_lifecycle_and_backup_access():

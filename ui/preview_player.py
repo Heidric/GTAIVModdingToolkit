@@ -6,8 +6,8 @@ import atexit
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal, QThread
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from core.rpf import RPFParser
-from utils import resource_path
-from audio_utils import get_ivaudioconv_path
+from ui.application_utils import resource_path
+from core.audio_replacement.audio_utils import get_ivaudioconv_path
 
 class AudioExtractor(QThread):
     finished = Signal(str) 

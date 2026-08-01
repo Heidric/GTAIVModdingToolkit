@@ -5,14 +5,16 @@ A Windows desktop toolkit for modifying Grand Theft Auto IV assets.
 [![Tests](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml/badge.svg)](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/tests.yml)
 [![Portable Windows Build](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/portable-windows.yml/badge.svg)](https://github.com/Heidric/GTAIVModdingToolkit/actions/workflows/portable-windows.yml)
 
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the current release summary.
+
 <div style="display: flex; justify-content: space-between; margin: 20px 0;">
-    <img src="assets/image.png" alt="Radio station selection interface" width="400"/>
-    <img src="assets/image-1.png" alt="Radio track selection interface" width="400"/>
+    <img src="docs/images/radio-station-selection.png" alt="Radio station selection interface" width="400"/>
+    <img src="docs/images/radio-track-selection.png" alt="Radio track selection interface" width="400"/>
 </div>
 
 ## Current scope
 
-The toolkit modifies existing radio-track slots and existing radio-station logo textures. It does not create new stations or new track slots.
+The toolkit modifies existing radio-track slots, existing radio-station logo textures, existing entries in RPF2, RPF3, and IMG3 archives, and existing textures inside WTD dictionaries or supported WDR drawables. It does not create new stations, track slots, archive entries, archive directories, or texture records.
 
 Implemented features:
 
@@ -36,6 +38,18 @@ Implemented features:
 - Detect common local GTA IV installations and remember the selected replacement method.
 - Restore the latest paired station-RPF and `sounds.dat15` audio state from the UI.
 - Run packaged-resource, dependency, installation, and write-access checks from the UI or command line.
+- Browse arbitrary RPF2 and RPF3 archives as nested directory and file trees.
+- Inspect size and offset metadata and export any existing RPF entry.
+- Replace any existing RPF entry through staged verification, timestamped backup, atomic commit, and rollback.
+- Inspect WTD texture dictionaries, including dimensions, format, mip count, and payload size.
+- Preview extractable WTD textures and export them as DDS files.
+- Replace existing DXT1, DXT5, and A8R8G8B8 texture payloads from an image while preserving the WTD layout and unrelated bytes.
+- Open the directory containing the latest generic archive backup from the browser.
+- Open GTA IV `.img` archives that use the IMG3 format.
+- Filter loaded archive entries by a case-insensitive substring of their name.
+- Inspect and replace embedded textures inside supported WDR drawables.
+- Queue replacements across multiple WTD and WDR entries and apply them in one verified archive transaction.
+- Permanently retain the first backup of an archive and keep a configurable number of newer rolling backups.
 
 ### Input formats
 
@@ -107,17 +121,42 @@ Before a verified single or batch replacement commits, the toolkit captures the 
 
 Recovery always restores the latest paired state for the current mode. The displaced active state is captured first, so running recovery again reverses the recovery. A failed two-file recovery swap restores the state that was active when recovery began.
 
-## RPF handling
+### Transactional generic archive and texture replacement
 
-The toolkit vendors a patched copy of `pyrpfiv` under `vendor/pyrpfiv/`.
+Generic RPF/IMG entry replacement and WTD/WDR texture replacement use the same fail-closed model as the audio tools:
 
-When replacing an RPF entry:
+1. The selected RPF is copied to a staging archive in the same directory.
+2. The existing entry is replaced only inside the staging archive.
+3. The staging archive is reopened, its entry set and unrelated metadata are checked, and the replacement bytes are verified with SHA-256.
+4. A timestamped backup of the original RPF is created and verified.
+5. The staging archive atomically replaces the active archive.
+6. The committed archive is reopened and verified again.
+7. A failed final swap or post-commit verification restores the original archive from the verified backup.
 
-- the existing name hash and TOC position are preserved;
+Individual WTD or embedded WDR texture replacement first creates and verifies a surgical resource patch, then passes the complete modified entry through transactional archive replacement. The original RSC5 header, texture records, and every unrelated payload byte remain unchanged.
+
+Queued replacement groups multiple WTD/WDR texture edits by entry, patches every affected entry once, writes all entries to one staging archive, verifies the complete batch, creates one backup, and commits once. A failed batch does not modify the active archive.
+
+The browser serializes file operations and prevents the application from closing while a worker is reading, exporting, or modifying an archive. The first backup of each archive is retained permanently; the number of additional rolling backups is configurable in Settings and defaults to three.
+
+## Archive handling
+
+The toolkit vendors a patched copy of `pyrpfiv` under `vendor/pyrpfiv/` and includes an IMG3 parser for GTA IV `.img` archives. The generic browser follows nested RPF directory entries, presents stable full paths, reads exact logical entry bytes, and exports without flattening the archive structure. RPF2 names are decoded from the TOC string table, RPF3 names are resolved from known filename hashes, and IMG3 entries expose their stored names.
+
+When replacing an archive entry:
+
+- only an existing entry can be targeted;
+- the existing RPF2 string-table name reference or RPF3 name hash and TOC position are preserved;
+- all unrelated entry paths and metadata must remain unchanged;
 - a replacement that fits remains at its current offset;
 - a replacement that exceeds the current slot is appended at an `0x800`-aligned end-of-file offset;
-- the encrypted or unencrypted RPF3 TOC is updated with the new size and offset;
-- the new offset is constrained to the 31-bit RPF3 file-offset range.
+- encrypted and unencrypted RPF2 and RPF3 TOCs are updated in their native layouts;
+- RPF2 resource entries preserve their resource type, validate the replacement RSC5 header, and keep the resource type packed into the low byte of the TOC offset;
+- compressed non-resource RPF2 entries are exported as logical bytes and recompressed when replaced;
+- relocated offsets are constrained to the representable range of the selected RPF version;
+- the source bytes, staged bytes, backup, and committed bytes are verified before success is reported.
+
+The `0.16.0` browser does not add, delete, rename, or move archive entries and does not edit archive directory structures.
 
 ## GTAIV.exe compatibility
 
@@ -192,6 +231,20 @@ The same report is available from the command line:
 ```
 
 Use `--packaged-only` to check application resources and dependencies without requiring a GTA IV installation.
+
+### RPF Browser
+
+1. Select a valid GTA IV installation on the start page and open **RPF Browser**.
+2. Choose an `.rpf` or `.img` archive and select **Open**.
+3. Browse the entry tree or narrow the loaded snapshot with **Name filter**. Any selected file can be exported or transactionally replaced with an external file.
+4. Select a `.wtd` entry, or a supported `.wdr` entry with embedded textures, to inspect its texture table.
+5. Select an extractable texture to preview it or export it as DDS/PNG.
+6. For DXT1, DXT5, or A8R8G8B8 textures, either replace the selected texture immediately or add it to the replacement queue.
+7. Review queued replacements, verify the current and replacement previews, and apply the queue as one archive transaction.
+8. Wait for staging, backup creation, commit, and final verification to finish before closing the application or starting the game.
+9. Use **Open latest backup folder** to locate retained backups after a successful replacement.
+
+Replacing an entire `.wtd` through **Replace selected entry from file** is distinct from replacing one texture payload. For an RPF2 resource entry, the external file must contain an RSC5 header with the same resource type as the existing entry; the parser validates the header and updates matching resource flags in the TOC. Individual texture replacement preserves the existing WTD structure and is limited to supported texture formats.
 
 ### Single-track replacement
 
@@ -269,6 +322,12 @@ Pass `--experimental` to the selected command, pass `allow_experimental=True` th
 
 ## Reverting changes
 
+### Generic RPF Browser changes
+
+Every successful generic entry or texture replacement retains a timestamped `.rpf` backup beside the modified archive. The browser can open the directory containing the latest backup, but `0.16.0` does not automatically restore generic RPF backups.
+
+To restore one manually, close the game and the toolkit, keep the modified archive as an additional safety copy, and replace it with the corresponding verified backup. Do not restore a backup from a different game version or a different archive path.
+
 ### FusionFix mode
 
 Radio-logo changes can be reverted from **Radio Logo Tools → Recovery**. Manual removal is also possible by deleting the relevant `radio_hud*.wtd` files under the matching texture directory:
@@ -309,7 +368,7 @@ Build the portable Windows directory locally:
 
 ```bash
 .venv/Scripts/python.exe -m pip install -r requirements-build.txt
-.venv/Scripts/python.exe -m PyInstaller --clean --noconfirm GTAIVModdingToolkit.spec
+.venv/Scripts/python.exe -m PyInstaller --clean --noconfirm packaging/GTAIVModdingToolkit.spec
 dist/GTAIVModdingToolkit/GTAIVModdingToolkit.exe --smoke-test
 dist/GTAIVModdingToolkit/GTAIVModdingToolkit.exe --doctor --packaged-only
 ```
@@ -333,6 +392,11 @@ The synthetic tests do not require GTA IV files and cover:
 - paired audio-history capture, reversible recovery, and failed-swap rollback;
 - support-bundle path redaction, log collection, and archive contents;
 - GTA IV installation discovery and preference persistence.
+- nested RPF2/RPF3 directory traversal, string-table/hash name resolution, exact logical entry reads, and export overwrite handling;
+- transactional generic RPF replacement, relocation, backup verification, and post-commit rollback;
+- WTD metadata inspection, DDS export, bounded PNG preview, and duplicate texture-name handling;
+- index-addressed surgical texture replacement with unrelated physical and virtual bytes preserved;
+- combined RPF/WTD texture transactions and browser worker-boundary/lifecycle checks.
 
 ## Third-party components
 

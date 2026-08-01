@@ -1,13 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
+_SPEC_LOCATION = Path(SPECPATH).resolve()
+_SPEC_DIRECTORY = _SPEC_LOCATION if _SPEC_LOCATION.is_dir() else _SPEC_LOCATION.parent
+PROJECT_ROOT = _SPEC_DIRECTORY.parent
+
 datas = [
-    ("assets", "assets"),
-    ("tools", "tools"),
-    ("README.md", "."),
-    ("LICENSE", "."),
+    (str(PROJECT_ROOT / "assets"), "assets"),
+    (str(PROJECT_ROOT / "tools"), "tools"),
+    (str(PROJECT_ROOT / "README.md"), "."),
+    (str(PROJECT_ROOT / "LICENSE"), "."),
 ]
 binaries = []
 hiddenimports = collect_submodules("vendor")
@@ -20,8 +26,8 @@ for package in ("PIL", "qt_material", "qt_material_icons", "qtawesome", "texfury
 
 
 a = Analysis(
-    ["app.py"],
-    pathex=["."],
+    [str(PROJECT_ROOT / "app.py")],
+    pathex=[str(PROJECT_ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -50,7 +56,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version="packaging/windows_version_info.txt",
+    version=str(PROJECT_ROOT / "packaging" / "windows_version_info.txt"),
 )
 
 coll = COLLECT(

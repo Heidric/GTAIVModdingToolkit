@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QMainWindow, QStackedWidget, QMessageBox
 
-from build_info import application_title
+from core.build_info import application_title
 from ui.pages.intro import IntroPage
 from ui.pages.settings import SettingsPage
 from ui.pages.radio_select import RadioSelectPage
@@ -11,7 +11,7 @@ from ui.pages.batch_replace import BatchReplacePage
 from ui.pages.radio_logo_install import RadioLogoInstallPage
 from ui.pages.audio_recovery import AudioRecoveryPage
 from ui.pages.rpf_browser import RPFBrowserPage
-from utils import install_ffmpeg, check_ffmpeg
+from ui.application_utils import install_ffmpeg, check_ffmpeg
 from ui.workers.batch_replacement import BatchReplaceWorker
 from ui.workers.single_replacement import SingleTrackReplacementWorker
 

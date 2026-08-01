@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QMainWindow
 from qt_material import apply_stylesheet
 
-from build_info import application_title, build_summary
+from core.build_info import application_title, build_summary
 from core.app_logging import (
     configure_application_logging,
     get_application_logger,
@@ -13,7 +13,7 @@ from core.app_logging import (
 )
 from core.system_check import format_system_check_report, run_system_check
 from ui.main_window import GTAIVEditor
-from utils import check_ffmpeg, resource_path
+from ui.application_utils import check_ffmpeg, resource_path
 
 
 class SplashWindow(QMainWindow):

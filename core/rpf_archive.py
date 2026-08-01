@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol
 
+from core.archive_backups import prune_archive_backups
 from core.installation_lock import installation_lock
 from core.rpf import RPFParser
 
@@ -90,10 +91,10 @@ def normalize_entry_path(entry_path: str) -> str:
 
 def _validated_archive_path(archive_path: str | os.PathLike[str]) -> Path:
     path = Path(archive_path).expanduser().resolve()
-    if path.suffix.casefold() != ".rpf":
-        raise ValueError("archive_path must point to an .rpf file")
+    if path.suffix.casefold() not in {".rpf", ".img"}:
+        raise ValueError("archive_path must point to an .rpf or .img file")
     if not path.is_file():
-        raise FileNotFoundError(f"RPF archive not found: {path}")
+        raise FileNotFoundError(f"GTA IV archive not found: {path}")
     return path
 
 
@@ -327,7 +328,7 @@ def _restore_archive_backup(
         backup_path,
         directory=archive_path.parent,
         prefix=".gtaiv_toolkit_rpf_rollback_",
-        suffix=".rpf",
+        suffix=archive_path.suffix,
     )
     try:
         os.replace(rollback, archive_path)
@@ -364,7 +365,7 @@ def _replace_rpf_entry_transactional_locked(
             archive,
             directory=archive.parent,
             prefix=".gtaiv_toolkit_rpf_",
-            suffix=".staged.rpf",
+            suffix=f".staged{archive.suffix}",
         )
         staged_replacement = _temporary_copy(
             replacement,
@@ -431,6 +432,8 @@ def _replace_rpf_entry_transactional_locked(
             backup_path.unlink(missing_ok=True)
             backup_path = None
             raise
+
+        prune_archive_backups(archive)
 
         return RPFReplacementResult(
             archive_path=archive,

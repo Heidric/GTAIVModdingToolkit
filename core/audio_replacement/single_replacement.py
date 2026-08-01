@@ -13,7 +13,7 @@ from typing import Callable
 
 from pydub import AudioSegment
 
-from audio_utils import replace_special_audio, update_song_duration
+from .audio_utils import replace_special_audio, update_song_duration
 from core.audio_history import capture_audio_state, discard_audio_snapshot
 from core.audio_input import validate_replacement_audio
 from core.rpf import RPFParser

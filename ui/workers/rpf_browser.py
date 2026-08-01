@@ -69,7 +69,12 @@ class RPFWTDInspectWorker(QThread):
                 self.extracted_path,
                 overwrite=True,
             )
-            snapshot = inspect_wtd_archive(local_path)
+            if Path(self.entry_path).suffix.casefold() == ".wdr":
+                from core.wdr_archive import inspect_wdr_archive
+
+                snapshot = inspect_wdr_archive(local_path)
+            else:
+                snapshot = inspect_wtd_archive(local_path)
         except Exception as exc:
             try:
                 Path(self.extracted_path).unlink(missing_ok=True)
@@ -171,11 +176,20 @@ class WTDTexturePreviewWorker(QThread):
 
     def run(self):
         try:
-            preview = render_wtd_texture_preview(
-                self.wtd_path,
-                self.texture_index,
-                max_dimension=self.max_dimension,
-            )
+            if Path(self.wtd_path).suffix.casefold() == ".wdr":
+                from core.wdr_archive import render_wdr_texture_preview
+
+                preview = render_wdr_texture_preview(
+                    self.wtd_path,
+                    self.texture_index,
+                    max_dimension=self.max_dimension,
+                )
+            else:
+                preview = render_wtd_texture_preview(
+                    self.wtd_path,
+                    self.texture_index,
+                    max_dimension=self.max_dimension,
+                )
         except Exception as exc:
             self.error.emit(self.request_id, self.texture_index, str(exc))
             return
@@ -202,7 +216,19 @@ class WTDTextureExportWorker(QThread):
 
     def run(self):
         try:
-            result = export_wtd_texture(
+            source_suffix = Path(self.wtd_path).suffix.casefold()
+            destination_suffix = Path(self.destination_path).suffix.casefold()
+            if source_suffix == ".wdr":
+                from core.wdr_archive import export_wdr_texture
+
+                exporter = export_wdr_texture
+            elif destination_suffix == ".png":
+                from core.wtd_archive import export_wtd_texture_png
+
+                exporter = export_wtd_texture_png
+            else:
+                exporter = export_wtd_texture
+            result = exporter(
                 self.wtd_path,
                 self.texture_index,
                 self.destination_path,
@@ -238,12 +264,55 @@ class RPFWTDTextureReplaceWorker(QThread):
 
     def run(self):
         try:
-            result = replace_rpf_wtd_texture_from_image_transactional(
+            if Path(self.entry_path).suffix.casefold() == ".wdr":
+                from core.rpf_wdr import (
+                    replace_rpf_wdr_texture_from_image_transactional,
+                )
+
+                replacer = replace_rpf_wdr_texture_from_image_transactional
+            else:
+                replacer = replace_rpf_wtd_texture_from_image_transactional
+            result = replacer(
                 self.archive_path,
                 self.gtaiv_exe_path,
                 self.entry_path,
                 self.texture_index,
                 self.image_path,
+                quality=self.quality,
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+            return
+        self.completed.emit(result)
+
+class RPFTextureBatchReplaceWorker(QThread):
+    completed = Signal(object)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        archive_path: str,
+        gtaiv_exe_path: str,
+        replacements,
+        *,
+        quality: float = 0.9,
+    ):
+        super().__init__()
+        self.archive_path = archive_path
+        self.gtaiv_exe_path = gtaiv_exe_path
+        self.replacements = tuple(replacements)
+        self.quality = quality
+
+    def run(self):
+        try:
+            from core.archive_texture_batch import (
+                replace_archive_textures_transactional,
+            )
+
+            result = replace_archive_textures_transactional(
+                self.archive_path,
+                self.gtaiv_exe_path,
+                self.replacements,
                 quality=self.quality,
             )
         except Exception as exc:

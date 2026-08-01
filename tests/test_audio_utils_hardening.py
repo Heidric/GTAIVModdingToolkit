@@ -7,7 +7,7 @@ import pytest
 
 
 def _load_audio_utils():
-    module_path = Path(__file__).resolve().parents[1] / "audio_utils.py"
+    module_path = Path(__file__).resolve().parents[1] / "core" / "audio_replacement" / "audio_utils.py"
     spec = importlib.util.spec_from_file_location(
         "audio_utils_hardening_target",
         module_path,
@@ -21,7 +21,7 @@ audio_utils = _load_audio_utils()
 
 
 def test_audio_utils_uses_qt_independent_runtime_helpers():
-    module_path = Path(__file__).resolve().parents[1] / "audio_utils.py"
+    module_path = Path(__file__).resolve().parents[1] / "core" / "audio_replacement" / "audio_utils.py"
     source = module_path.read_text(encoding="utf-8")
 
     assert "from core.runtime_tools import" in source

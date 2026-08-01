@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QThread, Signal
 
-from batch_replacement import (
+from core.audio_replacement.batch_replacement import (
     BatchReplacementCancelled,
     replace_batch_transactional,
 )

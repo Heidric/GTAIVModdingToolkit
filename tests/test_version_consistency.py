@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from build_info import APP_VERSION, release_tag
+from core.build_info import APP_VERSION, release_tag
 
 
 ROOT = Path(__file__).resolve().parents[1]

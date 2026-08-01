@@ -9,7 +9,7 @@ from ui.styles import BUTTON_STYLE, SONG_LIST_STYLE
 from core.rpf import RPFParser
 import qtawesome as qta
 from ui.preview_player import PreviewPlayer
-from audio_utils import get_sounds_dat15_data, get_song_duration
+from core.audio_replacement.audio_utils import get_sounds_dat15_data, get_song_duration
 
 class SongItemWidget(QWidget):
     preview_clicked = Signal(str)

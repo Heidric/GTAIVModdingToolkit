@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import batch_replacement
-from batch_replacement import (
+from core.audio_replacement import batch_replacement
+from core.audio_replacement.batch_replacement import (
     BatchReplacementCancelled,
     replace_batch_transactional,
 )

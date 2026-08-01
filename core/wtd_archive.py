@@ -224,6 +224,36 @@ def export_wtd_texture(
     return result
 
 
+def export_wtd_texture_png(
+    path: str | os.PathLike[str],
+    texture_index: int,
+    destination_path: str | os.PathLike[str],
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Export one supported WTD texture as a full-resolution RGBA PNG."""
+    archive = read_wtd(_validated_wtd_path(path))
+    texture = _select_texture(archive, texture_index)
+    dds = texture_to_dds(texture)
+    try:
+        with Image.open(io.BytesIO(dds)) as source:
+            source.load()
+            image = source.convert("RGBA")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise WTDTexturePreviewError(
+            f"Texture {texture.name!r} cannot be decoded for PNG export: {exc}"
+        ) from exc
+
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    payload = output.getvalue()
+    destination = Path(destination_path).expanduser().resolve()
+    result = _write_bytes_atomic(destination, payload, overwrite=overwrite)
+    if result.stat().st_size != len(payload):
+        raise OSError(f"Exported PNG size verification failed: {result}")
+    return result
+
+
 def replace_wtd_texture_from_image(
     path: str | os.PathLike[str],
     texture_index: int,

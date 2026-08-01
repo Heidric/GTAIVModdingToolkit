@@ -23,7 +23,7 @@ from core.app_preferences import (
 )
 from core.game_installations import discover_gtaiv_installations, is_gtaiv_installation
 from core.support_bundle import create_support_bundle as build_support_bundle
-from replacement_strategy import check_fusionfix_installed
+from core.audio_replacement.replacement_strategy import check_fusionfix_installed
 from ui.path_dialogs import (
     PathHistoryKey,
     get_remembered_directory,

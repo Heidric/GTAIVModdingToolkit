@@ -1,4 +1,4 @@
-from build_info import APP_NAME, APP_VERSION, application_title
+from core.build_info import APP_NAME, APP_VERSION, application_title
 
 
 def test_application_title_contains_name_and_version():

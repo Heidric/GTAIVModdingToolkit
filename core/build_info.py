@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from build_metadata import BUILD_CHANNEL, BUILD_COMMIT, BUILD_DATE_UTC
+from .build_metadata import BUILD_CHANNEL, BUILD_COMMIT, BUILD_DATE_UTC
 
 APP_NAME = "GTA IV Modding Toolkit"
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.16.0"
 
 
 def application_title() -> str:

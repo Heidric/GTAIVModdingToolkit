@@ -12,12 +12,17 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from build_info import build_summary
+from core.build_info import build_summary
 from core.app_logging import application_log_directory
+from core.archive_backups import (
+    MAX_ROLLING_BACKUP_LIMIT,
+    MIN_ROLLING_BACKUP_LIMIT,
+)
 from core.app_preferences import (
     AppPreferences,
     ReplacementMode,
@@ -95,6 +100,26 @@ class SettingsPage(QWidget):
         method_layout.addWidget(self.direct_radio)
         layout.addWidget(method_group, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        backup_group = QGroupBox("Archive Backups", self)
+        backup_group.setStyleSheet(GROUP_BOX_STYLE)
+        backup_group.setFixedWidth(620)
+        backup_layout = QVBoxLayout(backup_group)
+        backup_note = QLabel(
+            "The oldest backup is always kept. Retain this many additional "
+            "recent backups for each modified RPF/IMG archive:",
+            backup_group,
+        )
+        backup_note.setWordWrap(True)
+        backup_note.setStyleSheet("color: #B0BEC5;")
+        backup_layout.addWidget(backup_note)
+        self.rolling_backup_spin = QSpinBox(backup_group)
+        self.rolling_backup_spin.setRange(
+            MIN_ROLLING_BACKUP_LIMIT, MAX_ROLLING_BACKUP_LIMIT
+        )
+        self.rolling_backup_spin.setSuffix(" recent backup(s)")
+        backup_layout.addWidget(self.rolling_backup_spin)
+        layout.addWidget(backup_group, alignment=Qt.AlignmentFlag.AlignCenter)
+
         about_group = QGroupBox("Build Information", self)
         about_group.setStyleSheet(GROUP_BOX_STYLE)
         about_group.setFixedWidth(620)
@@ -146,6 +171,7 @@ class SettingsPage(QWidget):
         self.auto_detect_checkbox.setChecked(preferences.auto_detect_installation)
         self.direct_radio.setChecked(preferences.use_direct)
         self.fusion_radio.setChecked(not preferences.use_direct)
+        self.rolling_backup_spin.setValue(preferences.rolling_backup_limit)
 
     def browse_directory(self):
         selected = select_existing_directory(
@@ -227,6 +253,7 @@ class SettingsPage(QWidget):
             AppPreferences(
                 replacement_mode=mode,
                 auto_detect_installation=self.auto_detect_checkbox.isChecked(),
+                rolling_backup_limit=self.rolling_backup_spin.value(),
             )
         )
         self.on_saved()

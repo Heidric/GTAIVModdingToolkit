@@ -6,8 +6,8 @@ import hashlib
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QTemporaryDir, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtCore import QByteArray, QTemporaryDir, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -25,6 +25,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.archive_texture_batch import TextureReplacementRequest
+from ui.archive_entry_filter import (
+    filter_archive_entries_by_name,
+    normalize_archive_name_filter,
+)
+from ui.texture_replacement_queue import (
+    QueuedTextureReplacement,
+    TextureReplacementQueue,
+    TextureReplacementQueueDialog,
+)
 from ui.path_dialogs import (
     PathHistoryKey,
     select_open_file,
@@ -36,6 +46,7 @@ from ui.workers.rpf_browser import (
     RPFEntryExportWorker,
     RPFEntryReplaceWorker,
     RPFInspectWorker,
+    RPFTextureBatchReplaceWorker,
     RPFWTDInspectWorker,
     RPFWTDTextureReplaceWorker,
     WTDTextureExportWorker,
@@ -59,6 +70,7 @@ class RPFBrowserPage(QWidget):
         self.selected_entry = None
         self.wtd_snapshot = None
         self.extracted_wtd_path = ""
+        self._current_preview_png_data = b""
         self._workers = set()
         self._archive_request_id = 0
         self._wtd_request_id = 0
@@ -66,9 +78,12 @@ class RPFBrowserPage(QWidget):
         self._replacement_worker = None
         self._replacement_result = None
         self._replacement_error = None
+        self._replacement_queue = TextureReplacementQueue()
+        self._current_preview_png_data = b""
         self._archive_open_in_progress = False
         self._entry_export_in_progress = False
         self._texture_export_in_progress = False
+        self._entry_name_filter = None
         self._entry_items = {}
         self._temporary_wtd_paths = set()
         self._last_backup_path = None
@@ -165,9 +180,37 @@ class RPFBrowserPage(QWidget):
         label.setStyleSheet("font-weight: bold; color: #FFC107;")
         layout.addWidget(label)
 
+        filter_row = QHBoxLayout()
+        filter_label = QLabel("Name filter:", panel)
+        filter_label.setStyleSheet("color: #B0BEC5;")
+        filter_row.addWidget(filter_label)
+
+        self.entry_name_filter = QLineEdit(panel)
+        self.entry_name_filter.setPlaceholderText("e.g. underpass, .wtd, lod03; empty shows all files")
+        self.entry_name_filter.setClearButtonEnabled(True)
+        self.entry_name_filter.setStyleSheet(LINE_EDIT_STYLE)
+        self.entry_name_filter.setEnabled(False)
+        self.entry_name_filter.textChanged.connect(
+            self._on_entry_name_filter_changed
+        )
+        filter_row.addWidget(self.entry_name_filter, stretch=1)
+        layout.addLayout(filter_row)
+
         self.entry_tree = QTreeWidget(panel)
         self.entry_tree.setHeaderLabels(("Name", "Size", "Offset"))
         self.entry_tree.setAlternatingRowColors(True)
+        self.entry_tree.setStyleSheet(
+            """
+            QTreeWidget::item:selected:active {
+                background-color: #FFC107;
+                color: #000000;
+            }
+            QTreeWidget::item:selected:!active {
+                background-color: #FFC107;
+                color: #000000;
+            }
+            """
+        )
         self.entry_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.entry_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.entry_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -202,12 +245,12 @@ class RPFBrowserPage(QWidget):
         panel = QWidget(self)
         layout = QVBoxLayout(panel)
 
-        label = QLabel("WTD textures", panel)
+        label = QLabel("Resource textures", panel)
         label.setStyleSheet("font-weight: bold; color: #FFC107;")
         layout.addWidget(label)
 
         self.wtd_details = QLabel(
-            "Select a .wtd entry to inspect its textures.",
+            "Select a .wtd or .wdr entry to inspect its textures.",
             panel,
         )
         self.wtd_details.setWordWrap(True)
@@ -245,7 +288,7 @@ class RPFBrowserPage(QWidget):
         )
         layout.addWidget(self.preview_label)
 
-        self.export_texture_button = QPushButton("Export selected texture as DDS", panel)
+        self.export_texture_button = QPushButton("Export selected texture...", panel)
         self.export_texture_button.setStyleSheet(BUTTON_STYLE)
         self.export_texture_button.setEnabled(False)
         self.export_texture_button.clicked.connect(self.export_selected_texture)
@@ -258,6 +301,26 @@ class RPFBrowserPage(QWidget):
         self.replace_texture_button.setEnabled(False)
         self.replace_texture_button.clicked.connect(self.replace_selected_texture)
         layout.addWidget(self.replace_texture_button)
+
+        queue_row = QHBoxLayout()
+        self.queue_texture_button = QPushButton(
+            "Add selected replacement to queue", panel
+        )
+        self.queue_texture_button.setStyleSheet(BUTTON_STYLE)
+        self.queue_texture_button.setEnabled(False)
+        self.queue_texture_button.clicked.connect(
+            self.queue_selected_texture_replacement
+        )
+        queue_row.addWidget(self.queue_texture_button)
+
+        self.review_queue_button = QPushButton(
+            "Review/apply queue (0)", panel
+        )
+        self.review_queue_button.setStyleSheet(BUTTON_STYLE)
+        self.review_queue_button.setEnabled(False)
+        self.review_queue_button.clicked.connect(self.show_replacement_queue)
+        queue_row.addWidget(self.review_queue_button)
+        layout.addLayout(queue_row)
         return panel
 
     def browse_archive(self):
@@ -267,7 +330,7 @@ class RPFBrowserPage(QWidget):
             self,
             "Open RPF Archive",
             PathHistoryKey.RPF_ARCHIVE,
-            file_filter="RPF Archives (*.rpf);;All Files (*)",
+            file_filter="GTA IV Archives (*.rpf *.img);;All Files (*)",
             fallback=self.archive_input.text().strip(),
         )
         if selected:
@@ -303,13 +366,9 @@ class RPFBrowserPage(QWidget):
             return
         self.archive_snapshot = snapshot
         self.archive_input.setText(str(snapshot.archive_path))
-        self._entry_items.clear()
-        nodes = build_rpf_browser_tree(snapshot.entries)
-        for node in nodes:
-            self.entry_tree.addTopLevelItem(self._tree_item(node))
-        self.entry_tree.expandToDepth(0)
+        visible_count = self._rebuild_entry_tree()
         self.status_label.setText(
-            f"Loaded {len(snapshot.entries)} file entries from {snapshot.archive_path.name}."
+            self._entry_filter_status(visible_count, len(snapshot.entries))
         )
         if self._restore_entry_path is not None:
             item = self._entry_items.get(self._restore_entry_path)
@@ -322,6 +381,65 @@ class RPFBrowserPage(QWidget):
             else:
                 self.entry_tree.setCurrentItem(item)
                 self.entry_tree.scrollToItem(item)
+
+    def _on_entry_name_filter_changed(self, value: str):
+        self._entry_name_filter = normalize_archive_name_filter(value)
+        if self.archive_snapshot is None:
+            return
+        visible_count = self._rebuild_entry_tree()
+        self.status_label.setText(
+            self._entry_filter_status(
+                visible_count, len(self.archive_snapshot.entries)
+            )
+        )
+
+    def _rebuild_entry_tree(self) -> int:
+        if self.archive_snapshot is None:
+            return 0
+
+        selected_path = (
+            self.selected_entry.path if self.selected_entry is not None else None
+        )
+        visible_entries = filter_archive_entries_by_name(
+            self.archive_snapshot.entries,
+            self._entry_name_filter,
+        )
+
+        self.entry_tree.blockSignals(True)
+        try:
+            self.entry_tree.clear()
+            self._entry_items.clear()
+            for node in build_rpf_browser_tree(visible_entries):
+                self.entry_tree.addTopLevelItem(self._tree_item(node))
+            self.entry_tree.expandToDepth(0)
+
+            selected_item = (
+                self._entry_items.get(selected_path)
+                if selected_path is not None
+                else None
+            )
+            if selected_item is not None:
+                self.entry_tree.setCurrentItem(selected_item)
+                self.entry_tree.scrollToItem(selected_item)
+        finally:
+            self.entry_tree.blockSignals(False)
+
+        if selected_path is not None and selected_path not in self._entry_items:
+            self.selected_entry = None
+            self.entry_details.setText("No entry selected.")
+            self._restore_entry_actions()
+            self._clear_wtd()
+
+        return len(visible_entries)
+
+    def _entry_filter_status(self, visible_count: int, total_count: int) -> str:
+        archive_name = self.archive_snapshot.archive_path.name
+        if self._entry_name_filter is None:
+            return f"Loaded {total_count} file entries from {archive_name}."
+        return (
+            f"Showing {visible_count} of {total_count} entries whose name contains "
+            f"{self._entry_name_filter!r} in {archive_name}."
+        )
 
     def _on_archive_error(self, request_id: int, message: str):
         if request_id != self._archive_request_id:
@@ -357,8 +475,11 @@ class RPFBrowserPage(QWidget):
             f"Path: {entry.path}\nSize: {self._format_bytes(entry.size)} "
             f"({entry.size} bytes)\nOffset: 0x{entry.offset:X}"
         )
-        if not entry.path.casefold().endswith(".wtd"):
-            self.wtd_details.setText("The selected entry is not a WTD texture dictionary.")
+        resource_suffix = Path(entry.path).suffix.casefold()
+        if resource_suffix not in {".wtd", ".wdr"}:
+            self.wtd_details.setText(
+                "The selected entry does not contain inspectable textures."
+            )
             return
         self._inspect_selected_wtd(entry.path)
 
@@ -368,11 +489,15 @@ class RPFBrowserPage(QWidget):
         self._wtd_request_id += 1
         request_id = self._wtd_request_id
         digest = hashlib.sha256(entry_path.encode("utf-8")).hexdigest()[:20]
+        resource_suffix = Path(entry_path).suffix.casefold()
         extracted_path = str(
-            Path(self._temporary_directory.path()) / f"{request_id}-{digest}.wtd"
+            Path(self._temporary_directory.path())
+            / f"{request_id}-{digest}{resource_suffix}"
         )
         self._temporary_wtd_paths.add(Path(extracted_path))
-        self.wtd_details.setText("Extracting and reading WTD metadata...")
+        self.wtd_details.setText(
+            "Extracting and reading texture resource metadata..."
+        )
         worker = RPFWTDInspectWorker(
             request_id,
             str(self.archive_snapshot.archive_path),
@@ -397,8 +522,9 @@ class RPFBrowserPage(QWidget):
         self._temporary_wtd_paths.add(Path(local_path))
         if previous_path and previous_path != local_path:
             self._discard_temporary_wtd(previous_path)
+        resource_kind = Path(entry_path).suffix.lstrip(".").upper()
         self.wtd_details.setText(
-            f"Textures: {len(snapshot.textures)} | "
+            f"{resource_kind} textures: {len(snapshot.textures)} | "
             f"Virtual: {self._format_bytes(snapshot.virtual_size)} | "
             f"Physical: {self._format_bytes(snapshot.physical_size)}"
         )
@@ -418,7 +544,7 @@ class RPFBrowserPage(QWidget):
                 if column == 0:
                     item.setData(_TEXTURE_INDEX_ROLE, texture.index)
                 self.texture_table.setItem(row, column, item)
-        self.status_label.setText(f"Loaded WTD entry {entry_path}.")
+        self.status_label.setText(f"Loaded texture resource {entry_path}.")
         if self._restore_entry_path == entry_path:
             restore_index = self._restore_texture_index
             self._restore_entry_path = None
@@ -439,13 +565,15 @@ class RPFBrowserPage(QWidget):
         if self._restore_entry_path == entry_path:
             self._restore_entry_path = None
             self._restore_texture_index = None
-        self.wtd_details.setText("The selected WTD could not be read.")
+        self.wtd_details.setText("The selected texture resource could not be read.")
         self.status_label.setText(f"Could not inspect {entry_path}.")
-        QMessageBox.critical(self, "WTD Inspection Error", message)
+        QMessageBox.critical(self, "Texture Inspection Error", message)
 
     def on_texture_selected(self, current_row, _current_column, _previous_row, _previous_column):
         self.export_texture_button.setEnabled(False)
         self.replace_texture_button.setEnabled(False)
+        self.queue_texture_button.setEnabled(False)
+        self._current_preview_png_data = b""
         self.preview_label.clear()
         if current_row < 0 or self.wtd_snapshot is None or not self.extracted_wtd_path:
             self.preview_label.setText("No texture selected.")
@@ -482,10 +610,12 @@ class RPFBrowserPage(QWidget):
             return
         if self._selected_texture_index() != texture_index:
             return
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(preview.png_data, b"PNG"):
+        self._current_preview_png_data = bytes(preview.png_data)
+        image = QImage.fromData(QByteArray(preview.png_data), "PNG")
+        if image.isNull():
             self.preview_label.setText("The generated preview image is invalid.")
             return
+        pixmap = QPixmap.fromImage(image)
         self.preview_label.setPixmap(
             pixmap.scaled(
                 self.preview_label.size(),
@@ -496,6 +626,7 @@ class RPFBrowserPage(QWidget):
         self.status_label.setText(
             f"Previewing {preview.texture.name} ({preview.texture.format_name})."
         )
+        self._update_queue_controls()
 
     def _on_preview_error(self, request_id, texture_index, message):
         if request_id != self._preview_request_id:
@@ -700,16 +831,26 @@ class RPFBrowserPage(QWidget):
         suggested = self._safe_texture_filename(texture.name)
         destination = select_save_file(
             self,
-            "Export WTD Texture",
+            "Export Texture",
             PathHistoryKey.WTD_TEXTURE_EXPORT,
-            file_filter="DDS Texture (*.dds);;All Files (*)",
+            file_filter=(
+                "PNG Image (*.png);;DDS Texture (*.dds);;All Files (*)"
+            ),
             suggested_name=suggested,
             fallback=self.extracted_wtd_path,
         )
         if not destination:
             return
-        if not destination.casefold().endswith(".dds"):
-            destination += ".dds"
+        destination_suffix = Path(destination).suffix.casefold()
+        if not destination_suffix:
+            destination += ".png"
+        elif destination_suffix not in {".png", ".dds"}:
+            QMessageBox.warning(
+                self,
+                "Texture Export",
+                "Texture export supports only PNG and DDS destinations.",
+            )
+            return
         overwrite = self._confirm_overwrite(destination)
         if overwrite is None:
             return
@@ -725,6 +866,217 @@ class RPFBrowserPage(QWidget):
         worker.error.connect(self._on_export_error)
         worker.finished.connect(self._on_texture_export_finished)
         self._start_worker(worker)
+
+    def queue_selected_texture_replacement(self):
+        texture_index = self._selected_texture_index()
+        if (
+            texture_index is None
+            or self.wtd_snapshot is None
+            or self.archive_snapshot is None
+            or self.selected_entry is None
+            or self._replacement_worker is not None
+        ):
+            return
+
+        texture = self.wtd_snapshot.texture(texture_index)
+        if not texture.replaceable:
+            QMessageBox.warning(
+                self,
+                "Queue Texture Replacement",
+                f"The {texture.format_name} texture format is not replaceable.",
+            )
+            return
+        if not self._current_preview_png_data:
+            QMessageBox.warning(
+                self,
+                "Queue Texture Replacement",
+                "Wait for the current texture preview to finish rendering.",
+            )
+            return
+
+        image_path = select_open_file(
+            self,
+            "Select Queued Replacement Image",
+            PathHistoryKey.WTD_TEXTURE_REPLACEMENT,
+            file_filter=(
+                "Supported Images (*.png *.webp *.jpg *.jpeg *.bmp *.tga);;"
+                "PNG Images (*.png);;WebP Images (*.webp);;All Files (*)"
+            ),
+        )
+        if not image_path:
+            return
+
+        archive_path = self.archive_snapshot.archive_path.resolve()
+        queued_archive = self._replacement_queue.archive_path
+        if queued_archive is not None and queued_archive != archive_path:
+            response = QMessageBox.question(
+                self,
+                "Replacement Queue Uses Another Archive",
+                "The current queue belongs to a different archive. Clear it and "
+                "start a queue for the open archive?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+            self._replacement_queue.clear()
+
+        request = TextureReplacementRequest(
+            entry_path=self.selected_entry.path,
+            texture_index=texture.index,
+            texture_name=texture.name,
+            image_path=Path(image_path),
+        )
+        item = QueuedTextureReplacement(
+            request=request,
+            resource_kind=Path(self.selected_entry.path).suffix.lstrip(".").upper(),
+            dimensions=f"{texture.width} × {texture.height}",
+            format_name=texture.format_name,
+            target_png_data=bytes(self._current_preview_png_data),
+        )
+        if self._replacement_queue.contains(item.key):
+            response = QMessageBox.question(
+                self,
+                "Replace Queued Image",
+                f"A replacement is already queued for {texture.name}. "
+                "Use the newly selected image instead?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+
+        self._replacement_queue.add(archive_path, item)
+        self.status_label.setText(
+            f"Queued replacement for {self.selected_entry.path} / {texture.name}."
+        )
+        self._update_queue_controls()
+
+    def show_replacement_queue(self):
+        if not self._replacement_queue.items:
+            return
+        try:
+            dialog = TextureReplacementQueueDialog(self._replacement_queue, self)
+            dialog.apply_requested.connect(
+                lambda current=dialog: self._apply_queued_replacements(current)
+            )
+            dialog.exec()
+        except Exception as exc:
+            self.status_label.setText("Could not open the replacement queue.")
+            QMessageBox.critical(
+                self,
+                "Replacement Queue Error",
+                f"Could not open the replacement queue.\n\n{exc}",
+            )
+        finally:
+            self._update_queue_controls()
+
+    def _apply_queued_replacements(self, dialog):
+        if self._replacement_worker is not None or self.archive_snapshot is None:
+            return
+        queue_archive = self._replacement_queue.archive_path
+        if queue_archive is None or queue_archive != self.archive_snapshot.archive_path.resolve():
+            QMessageBox.warning(
+                self,
+                "Apply Replacement Queue",
+                "Open the archive that owns this replacement queue before applying it.",
+            )
+            return
+
+        requests = self._replacement_queue.requests()
+        if not requests:
+            return
+        first = requests[0]
+        self._replacement_result = None
+        self._replacement_error = None
+        self._restore_entry_path = first.entry_path
+        self._restore_texture_index = first.texture_index
+        worker = RPFTextureBatchReplaceWorker(
+            str(queue_archive),
+            self.gtaiv_exe_path,
+            requests,
+        )
+        self._replacement_worker = worker
+        self._invalidate_browser_reads()
+        self._refresh_controls()
+        self.status_label.setText(
+            f"Applying {len(requests)} queued texture replacements in one transaction..."
+        )
+        worker.completed.connect(self._on_texture_batch_replaced)
+        worker.error.connect(self._on_texture_batch_replacement_error)
+        worker.finished.connect(
+            lambda current=worker: self._on_texture_batch_replacement_finished(current)
+        )
+        self._start_worker(worker)
+        dialog.accept()
+
+    def _on_texture_batch_replaced(self, result):
+        self._replacement_result = result
+        self.status_label.setText(
+            f"Applied {len(result.replacements)} replacements; finalizing the UI state..."
+        )
+
+    def _on_texture_batch_replacement_error(self, message: str):
+        self._replacement_result = None
+        self._replacement_error = message
+        self._restore_entry_path = None
+        self._restore_texture_index = None
+        self.status_label.setText("Batch texture replacement failed.")
+
+    def _on_texture_batch_replacement_finished(self, worker):
+        if self._replacement_worker is not worker:
+            return
+        self._replacement_worker = None
+        result = self._replacement_result
+        error_message = self._replacement_error
+        self._replacement_result = None
+        self._replacement_error = None
+        self._refresh_controls()
+
+        if result is not None:
+            self._record_backup(result.backup_path)
+            relocated = ", ".join(result.relocated_entries) or "none"
+            replacement_count = len(result.replacements)
+            entry_count = len(result.entries)
+            self._replacement_queue.clear()
+            self._update_queue_controls()
+            QMessageBox.information(
+                self,
+                "Queued Replacements Applied",
+                f"Applied {replacement_count} texture replacements across "
+                f"{entry_count} resource entries. The committed archive was verified.\n\n"
+                f"Backup: {result.backup_path}\n"
+                f"Relocated entries: {relocated}",
+            )
+            self.open_archive()
+            return
+
+        QMessageBox.critical(
+            self,
+            "Batch Texture Replacement Error",
+            "The batch transaction failed. The original archive was preserved or "
+            f"restored. The queue was kept for another attempt.\n\n"
+            f"{error_message or 'Unknown error'}",
+        )
+        self._restore_texture_actions()
+        self._update_queue_controls()
+
+    def _update_queue_controls(self):
+        busy = self._file_operation_in_progress()
+        texture_index = self._selected_texture_index()
+        can_queue = False
+        if (
+            not busy
+            and texture_index is not None
+            and self.wtd_snapshot is not None
+            and self.selected_entry is not None
+            and self._current_preview_png_data
+        ):
+            can_queue = self.wtd_snapshot.texture(texture_index).replaceable
+        self.queue_texture_button.setEnabled(can_queue)
+        count = len(self._replacement_queue)
+        self.review_queue_button.setText(f"Review/apply queue ({count})")
+        self.review_queue_button.setEnabled(not busy and count > 0)
 
     def replace_selected_texture(self):
         texture_index = self._selected_texture_index()
@@ -770,11 +1122,11 @@ class RPFBrowserPage(QWidget):
         response = QMessageBox.question(
             self,
             "Confirm Texture Replacement",
-            "This operation modifies the selected RPF archive in place after "
+            "This operation modifies the selected GTA IV archive in place after "
             "staging and verification. A timestamped backup of the original "
             "archive will be retained.\n\n"
             f"Archive: {archive_path}\n"
-            f"WTD entry: {self.selected_entry.path}\n"
+            f"Texture resource: {self.selected_entry.path}\n"
             f"Texture: #{texture.index} {texture.name} "
             f"({texture.width} × {texture.height}, {texture.format_name})\n"
             f"Replacement image: {image_path}\n\n"
@@ -800,7 +1152,7 @@ class RPFBrowserPage(QWidget):
         self._invalidate_browser_reads()
         self._refresh_controls()
         self.status_label.setText(
-            f"Replacing texture {texture.name} and verifying the staged RPF archive..."
+            f"Replacing texture {texture.name} and verifying the staged archive..."
         )
         worker.completed.connect(self._on_texture_replaced)
         worker.error.connect(self._on_texture_replacement_error)
@@ -841,7 +1193,7 @@ class RPFBrowserPage(QWidget):
                 f"Texture #{result.texture.index} {result.texture.name} was replaced "
                 "and the committed archive was verified.\n\n"
                 f"Backup: {result.backup_path}\n"
-                f"RPF entry relocated: {relocation}",
+                f"Archive entry relocated: {relocation}",
             )
             self.open_archive()
             return
@@ -849,7 +1201,7 @@ class RPFBrowserPage(QWidget):
         QMessageBox.critical(
             self,
             "Texture Replacement Error",
-            "The transactional replacement failed. The original RPF archive "
+            "The transactional replacement failed. The original archive "
             f"was preserved or restored.\n\n{error_message or 'Unknown error'}",
         )
         self._restore_texture_actions()
@@ -867,6 +1219,11 @@ class RPFBrowserPage(QWidget):
         self.open_button.setEnabled(not busy and not self._archive_open_in_progress)
         self.back_button.setEnabled(not busy)
         self.entry_tree.setEnabled(not busy)
+        self.entry_name_filter.setEnabled(
+            self.archive_snapshot is not None
+            and not busy
+            and not self._archive_open_in_progress
+        )
         self.texture_table.setEnabled(not busy)
         self.open_backup_button.setEnabled(
             not busy
@@ -875,6 +1232,7 @@ class RPFBrowserPage(QWidget):
         )
         self._restore_entry_actions()
         self._restore_texture_actions()
+        self._update_queue_controls()
 
     def _restore_entry_actions(self):
         enabled = self.selected_entry is not None and not self._file_operation_in_progress()
@@ -930,8 +1288,9 @@ class RPFBrowserPage(QWidget):
         self._preview_request_id += 1
         self.wtd_snapshot = None
         self.extracted_wtd_path = ""
+        self._current_preview_png_data = b""
         self.texture_table.setRowCount(0)
-        self.wtd_details.setText("Select a .wtd entry to inspect its textures.")
+        self.wtd_details.setText("Select a .wtd or .wdr entry to inspect its textures.")
         self.preview_label.clear()
         self.preview_label.setText("No texture selected.")
         self.export_texture_button.setEnabled(False)
@@ -1023,9 +1382,10 @@ class RPFBrowserPage(QWidget):
         return True if response == QMessageBox.StandardButton.Yes else None
 
     @staticmethod
-    def _safe_texture_filename(name: str) -> str:
+    def _safe_texture_filename(name: str, suffix: str = ".png") -> str:
         stem = _SAFE_FILENAME.sub("_", name).strip("._") or "texture"
-        return f"{stem}.dds"
+        normalized_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+        return f"{stem}{normalized_suffix.casefold()}"
 
     @staticmethod
     def _format_bytes(value: int) -> str:

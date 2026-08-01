@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from build_info import build_summary
+from core.build_info import build_summary
 
 from .app_logging import (
     application_log_directory,

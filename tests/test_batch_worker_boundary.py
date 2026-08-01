@@ -19,11 +19,11 @@ def _import_roots(relative_path: str) -> set[str]:
 
 
 def test_batch_backend_does_not_import_qt():
-    assert "PySide6" not in _import_roots("batch_replacement.py")
+    assert "PySide6" not in _import_roots("core/audio_replacement/batch_replacement.py")
 
 
 def test_batch_worker_lives_in_ui_package():
-    backend_source = (ROOT / "batch_replacement.py").read_text(encoding="utf-8")
+    backend_source = (ROOT / "core/audio_replacement/batch_replacement.py").read_text(encoding="utf-8")
     worker_source = (
         ROOT / "ui/workers/batch_replacement.py"
     ).read_text(encoding="utf-8")

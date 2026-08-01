@@ -6,10 +6,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
+from core.archive_backups import (
+    DEFAULT_ROLLING_BACKUP_LIMIT,
+    validate_rolling_backup_limit,
+)
+
 _SETTINGS_ORGANIZATION = "Heidric"
 _SETTINGS_APPLICATION = "GTAIVModdingToolkit"
 _REPLACEMENT_MODE_KEY = "preferences/replacement_mode"
 _AUTO_DETECT_KEY = "preferences/auto_detect_installation"
+_ROLLING_BACKUP_LIMIT_KEY = "preferences/rolling_archive_backups"
 
 
 class SettingsStore(Protocol):
@@ -36,6 +42,7 @@ class ReplacementMode(str, Enum):
 class AppPreferences:
     replacement_mode: ReplacementMode = ReplacementMode.FUSIONFIX
     auto_detect_installation: bool = True
+    rolling_backup_limit: int = DEFAULT_ROLLING_BACKUP_LIMIT
 
     @property
     def use_direct(self) -> bool:
@@ -62,15 +69,26 @@ def _as_bool(value: object, default: bool) -> bool:
     return default
 
 
+def _as_rolling_backup_limit(value: object) -> int:
+    try:
+        return validate_rolling_backup_limit(value)
+    except (TypeError, ValueError):
+        return DEFAULT_ROLLING_BACKUP_LIMIT
+
+
 def load_preferences(settings: SettingsStore | None = None) -> AppPreferences:
     store = settings or _default_settings()
     mode = ReplacementMode.from_value(
         store.value(_REPLACEMENT_MODE_KEY, ReplacementMode.FUSIONFIX.value)
     )
     auto_detect = _as_bool(store.value(_AUTO_DETECT_KEY, True), True)
+    rolling_backup_limit = _as_rolling_backup_limit(
+        store.value(_ROLLING_BACKUP_LIMIT_KEY, DEFAULT_ROLLING_BACKUP_LIMIT)
+    )
     return AppPreferences(
         replacement_mode=mode,
         auto_detect_installation=auto_detect,
+        rolling_backup_limit=rolling_backup_limit,
     )
 
 
@@ -81,4 +99,8 @@ def save_preferences(
     store = settings or _default_settings()
     store.setValue(_REPLACEMENT_MODE_KEY, preferences.replacement_mode.value)
     store.setValue(_AUTO_DETECT_KEY, preferences.auto_detect_installation)
+    store.setValue(
+        _ROLLING_BACKUP_LIMIT_KEY,
+        validate_rolling_backup_limit(preferences.rolling_backup_limit),
+    )
     store.sync()

@@ -1,6 +1,6 @@
 import pytest
 
-import build_info
+from core import build_info
 
 
 def test_release_tag_tracks_application_version():
